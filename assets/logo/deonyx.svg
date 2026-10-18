@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <title>Deonyx</title>
+  <defs>
+    <clipPath id="dx-gem">
+      <polygon points="64,40 136,40 182,82 100,184 18,82"/>
+    </clipPath>
+    <clipPath id="dx-left">
+      <rect x="0" y="0" width="100" height="200"/>
+    </clipPath>
+    <clipPath id="dx-right">
+      <rect x="100" y="0" width="100" height="200"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#dx-gem)">
+    <!-- light half: the window as it was -->
+    <g clip-path="url(#dx-right)">
+      <rect x="100" y="36" width="90" height="150" fill="#e4e4ed"/>
+      <polygon points="64,40 100,40 82,82" fill="#f3f3f8"/>
+      <polygon points="100,40 82,82 118,82" fill="#ffffff"/>
+      <polygon points="100,40 136,40 118,82" fill="#e6e6ef"/>
+      <polygon points="136,40 118,82 159,82" fill="#f7f7fb"/>
+      <polygon points="136,40 159,82 182,82" fill="#d9d9e5"/>
+      <polygon points="82,82 118,82 100,184" fill="#ececf3"/>
+      <polygon points="118,82 159,82 100,184" fill="#d3d3df"/>
+      <polygon points="159,82 182,82 100,184" fill="#bebece"/>
+    </g>
+    <!-- dark half: the same window in Deonyx -->
+    <g clip-path="url(#dx-left)">
+      <rect x="10" y="36" width="90" height="150" fill="#16161e"/>
+      <polygon points="18,82 64,40 41,82" fill="#2c2c39"/>
+      <polygon points="64,40 41,82 82,82" fill="#1c1c26"/>
+      <polygon points="64,40 100,40 82,82" fill="#252531"/>
+      <polygon points="100,40 82,82 118,82" fill="#171720"/>
+      <polygon points="18,82 41,82 100,184" fill="#101016"/>
+      <polygon points="41,82 82,82 100,184" fill="#1a1a23"/>
+      <polygon points="82,82 118,82 100,184" fill="#0b0b10"/>
+    </g>
+    <!-- the line where light turns dark -->
+    <rect x="98.5" y="36" width="3" height="152" fill="#a99cff"/>
+  </g>
+  <!-- a star caught in the onyx -->
+  <path d="M52 52 L54.2 59.8 L62 62 L54.2 64.2 L52 72 L49.8 64.2 L42 62 L49.8 59.8 Z" fill="#cfc7ff"/>
+  <polygon points="64,40 136,40 182,82 100,184 18,82" fill="none" stroke="#8b7cf6" stroke-width="6" stroke-linejoin="round"/>
+</svg>

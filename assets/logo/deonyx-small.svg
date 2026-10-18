@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <title>Deonyx</title>
+  <!-- For 32 px and below: fewer facets, thicker outline. -->
+  <polygon points="18,82 64,40 100,40 100,82" fill="#2a2a36"/>
+  <polygon points="18,82 100,82 100,184" fill="#12121a"/>
+  <polygon points="100,40 136,40 182,82 100,82" fill="#f6f6fa"/>
+  <polygon points="100,82 182,82 100,184" fill="#cfcfdc"/>
+  <polygon points="64,40 136,40 182,82 100,184 18,82" fill="none" stroke="#8b7cf6" stroke-width="13" stroke-linejoin="round"/>
+</svg>
