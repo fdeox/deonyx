@@ -15,7 +15,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "publisher": "fdeox",
     "copyright": "Copyright (C) 2026 fdeox",
     "shortDescription": "Dark mode for any Windows app",
@@ -24,6 +26,12 @@
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "installer/hooks.nsh"
+      }
+    }
   }
 }
