@@ -81,6 +81,8 @@ pub struct Layer {
     shown: bool,
     pub born: Instant,
     pub first_frame_ms: Option<f64>,
+    /// Whether the owner binding took (it can't across a privilege boundary).
+    pub owned: bool,
     pub frames: u32,
     pub work_ms: f64,
 }
@@ -123,6 +125,7 @@ impl Layer {
                 // the target can't cover us even for one frame.
                 SetWindowLongPtrW(overlay, GWLP_HWNDPARENT, target.0 as isize);
             }
+            let owned = GetWindow(overlay, GW_OWNER).ok() == Some(target);
 
             let w0 = start.Width.max(1) as u32;
             let h0 = start.Height.max(1) as u32;
@@ -154,12 +157,20 @@ impl Layer {
                 last_probe: Instant::now(),
                 measured: false,
                 size: (w0, h0),
-                params: Params { lmin: look.lmin, lmax: look.lmax, sat: 0.95, amount: 1.0, ..Default::default() },
+                params: Params {
+                    lmin: look.lmin,
+                    lmax: look.lmax,
+                    sat: 0.95,
+                    amount: 1.0,
+                    fringe: if std::env::var_os("DEONYX_NO_FRINGE").is_some() { 0.0 } else { 1.0 },
+                    ..Default::default()
+                },
                 protect: Vec::new(),
                 last_rect: RECT::default(),
                 shown: false,
                 born: Instant::now(),
                 first_frame_ms: None,
+                owned,
                 frames: 0,
                 work_ms: 0.0,
             };
@@ -390,7 +401,9 @@ impl Layer {
             }
             let avg = sum / n as f64;
             let was = self.params.amount;
-            let on = if !self.measured {
+            let on = if std::env::var_os("DEONYX_FORCE_DARKEN").is_some() {
+                true
+            } else if !self.measured {
                 avg >= 0.46
             } else if was > 0.0 {
                 avg >= 0.42

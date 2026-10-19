@@ -11,7 +11,8 @@ cbuffer Params : register(b0)
     float sat;         // chroma kept
     float split;       // > 0: pixels left of this x stay original (comparison view)
     float amount;      // 1 = darken, 0 = window is dark already, show it as it is
-    float2 pad;
+    float fringe;      // 1 = keep saturation, which calms ClearType colour fringes
+    float pad;
 };
 
 float4 vs(uint id : SV_VertexID) : SV_Position
@@ -59,6 +60,12 @@ float3 from_oklab(float3 c)
         -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s);
 }
 
+float3 lab_at(int2 p, int2 size)
+{
+    p = clamp(p, int2(0, 0), size - 1);
+    return to_oklab(to_lin(src.Load(int3(p, 0)).rgb));
+}
+
 float4 ps(float4 pos : SV_Position) : SV_Target
 {
     float4 c = src.Load(int3(pos.xy, 0));
@@ -73,7 +80,41 @@ float4 ps(float4 pos : SV_Position) : SV_Target
     // Flip lightness only: white turns dark grey, black turns soft white,
     // and a red stays red.
     float3 lab = to_oklab(to_lin(c.rgb));
+    if (fringe > 0.0)
+    {
+        // ClearType draws a black stroke as a row of tinted pixels (yellow,
+        // dark red, dark blue, cyan) that the eye mixes back to black. Flipped
+        // to light they come apart into red and blue lines. Five pixels whose
+        // tints cancel out, across a strong light/dark step, are such text:
+        // give the pixel their average colour, which is close to grey.
+        // A single-hue line, an icon or a colour border doesn't cancel out.
+        uint w, h, levels;
+        src.GetDimensions(0, w, h, levels);
+        int2 size = int2(w, h);
+        int2 p = int2(pos.xy);
+        float2 sum = 0;
+        float chroma = 0;
+        float lo = lab.x;
+        float hi = lab.x;
+        [unroll] for (int k = -2; k <= 2; k++)
+        {
+            float3 q = k == 0 ? lab : lab_at(p + int2(k, 0), size);
+            sum += q.yz;
+            chroma += length(q.yz);
+            lo = min(lo, q.x);
+            hi = max(hi, q.x);
+        }
+        float2 avg = sum / 5.0;
+        float mean = chroma / 5.0;
+        if (hi - lo > 0.4 && mean > 0.02 && length(avg) < 0.4 * mean)
+            lab.yz = avg;
+    }
+    float before = lab.x;
     lab.x = lmin + (1.0 - lab.x) * (lmax - lmin);
-    lab.yz *= sat;
+    // Keep saturation (colour relative to lightness), not raw colour: a
+    // faint pink beside white text, say a ClearType fringe, would otherwise
+    // turn into a loud red outline once it is dark.
+    float keep = fringe > 0.0 ? pow(saturate(lab.x / max(before, 0.001)), 0.8) : 1.0;
+    lab.yz *= sat * keep;
     return float4(to_srgb(saturate(from_oklab(lab))), 1);
 }

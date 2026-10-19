@@ -6,6 +6,7 @@ use std::mem::size_of;
 use windows::core::{BOOL, PWSTR};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
+use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows::Win32::System::Threading::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -19,6 +20,33 @@ pub fn exe_name(pid: u32) -> Option<String> {
         ok.ok()?;
         let path = String::from_utf16_lossy(&buf[..len as usize]);
         path.rsplit('\\').next().map(str::to_string)
+    }
+}
+
+/// Whether a process runs as administrator. When we can't even read its
+/// token, it runs above us, which counts the same.
+pub fn is_elevated(pid: u32) -> bool {
+    unsafe {
+        let Ok(p) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return false };
+        let mut tok = HANDLE::default();
+        let elevated = if OpenProcessToken(p, TOKEN_QUERY, &mut tok).is_ok() {
+            let mut e = TOKEN_ELEVATION::default();
+            let mut len = 0u32;
+            let ok = GetTokenInformation(
+                tok,
+                TokenElevation,
+                Some(&mut e as *mut TOKEN_ELEVATION as *mut c_void),
+                size_of::<TOKEN_ELEVATION>() as u32,
+                &mut len,
+            )
+            .is_ok();
+            let _ = CloseHandle(tok);
+            ok && e.TokenIsElevated != 0
+        } else {
+            true
+        };
+        let _ = CloseHandle(p);
+        elevated
     }
 }
 

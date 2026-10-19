@@ -29,6 +29,7 @@ function stateText(app) {
   if (!app.enabled) return { live: false, text: "Off" };
   const n = status.running?.[key(app.exe)] ?? 0;
   if (n > 0) return { live: true, text: n === 1 ? "Darkening 1 window" : `Darkening ${n} windows` };
+  if ((status.admin?.[key(app.exe)] ?? 0) > 0) return { live: false, text: "Runs as administrator, which Deonyx can't darken yet" };
   return { live: false, text: "Waiting for it to open" };
 }
 

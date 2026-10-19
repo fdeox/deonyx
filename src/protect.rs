@@ -3,7 +3,7 @@
 // readers use. Runs on its own thread: UIA calls into other processes can be
 // slow and must never stall drawing.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -36,6 +36,18 @@ const VIEW_WORDS: &[&str] = &[
     "imageview",
     "videowidget",
 ];
+
+/// A full scan walks the whole UI tree, which costs the app real time (about
+/// 100 ms for SketchUp), so it only runs at first, when the window changes
+/// size, and now and then. In between we just ask the found elements where
+/// they are, one cheap call each.
+const FULL_EVERY: Duration = Duration::from_secs(10);
+
+struct Tracked {
+    elems: Vec<IUIAutomationElement>,
+    size: (i32, i32),
+    last_full: Instant,
+}
 
 #[derive(Clone, Default)]
 struct Shared {
@@ -85,20 +97,41 @@ fn run(shared: Arc<Mutex<Shared>>, dirty: Arc<AtomicBool>) -> Result<()> {
         cache.AddProperty(UIA_ControlTypePropertyId)?;
         cache.AddProperty(UIA_BoundingRectanglePropertyId)?;
         let all = uia.CreateTrueCondition()?;
-        let mut reported = std::collections::HashSet::new();
+        let mut reported = HashSet::new();
+        let mut tracked: HashMap<isize, Tracked> = HashMap::new();
         loop {
             let want = shared.lock().unwrap().want.clone();
+            tracked.retain(|h, _| want.contains(h));
             for h in want {
-                let t = Instant::now();
-                let rects = scan(&uia, &cache, &all, HWND(h as *mut _)).unwrap_or_default();
-                if reported.insert(h) {
-                    println!(
-                        "3D alan taramasi {:.0} ms, korunacak alan {}: {:?}",
-                        t.elapsed().as_secs_f64() * 1000.0,
-                        rects.len(),
-                        rects.iter().map(|r| (r.left, r.top, width(r), height(r))).collect::<Vec<_>>()
-                    );
-                }
+                let hwnd = HWND(h as *mut _);
+                let frame = frame_rect(hwnd);
+                let size = (width(&frame), height(&frame));
+                let full = tracked.get(&h).is_none_or(|t| t.size != size || t.last_full.elapsed() >= FULL_EVERY);
+                let rects = if full {
+                    let t = Instant::now();
+                    let found = scan(&uia, &cache, &all, hwnd, frame).unwrap_or_default();
+                    let rects: Vec<RECT> = found.iter().map(|(r, _)| *r).collect();
+                    if reported.insert(h) {
+                        println!(
+                            "3D alan taramasi {:.0} ms, korunacak alan {}: {:?}",
+                            t.elapsed().as_secs_f64() * 1000.0,
+                            rects.len(),
+                            rects.iter().map(|r| (r.left, r.top, width(r), height(r))).collect::<Vec<_>>()
+                        );
+                    }
+                    let elems = found.into_iter().map(|(_, e)| e).collect();
+                    tracked.insert(h, Tracked { elems, size, last_full: Instant::now() });
+                    rects
+                } else {
+                    match follow(&tracked[&h].elems, frame) {
+                        Some(r) => r,
+                        None => {
+                            // An element went away: look again next round.
+                            tracked.remove(&h);
+                            continue;
+                        }
+                    }
+                };
                 let mut s = shared.lock().unwrap();
                 if s.found.get(&h) != Some(&rects) {
                     s.found.insert(h, rects);
@@ -108,6 +141,30 @@ fn run(shared: Arc<Mutex<Shared>>, dirty: Arc<AtomicBool>) -> Result<()> {
             std::thread::sleep(Duration::from_millis(700));
         }
     }
+}
+
+/// Where the elements of the last full scan are now.
+fn follow(elems: &[IUIAutomationElement], frame: RECT) -> Option<Vec<RECT>> {
+    let mut out = Vec::new();
+    for e in elems {
+        let r = unsafe { e.CurrentBoundingRectangle() }.ok()?;
+        out.extend(relative(r, frame));
+    }
+    Some(out)
+}
+
+/// A screen rectangle clipped to the window and made relative to it.
+fn relative(r: RECT, frame: RECT) -> Option<RECT> {
+    let r = RECT {
+        left: r.left.max(frame.left),
+        top: r.top.max(frame.top),
+        right: r.right.min(frame.right),
+        bottom: r.bottom.min(frame.bottom),
+    };
+    if width(&r) <= 0 || height(&r) <= 0 {
+        return None;
+    }
+    Some(RECT { left: r.left - frame.left, top: r.top - frame.top, right: r.right - frame.left, bottom: r.bottom - frame.top })
 }
 
 fn is_view(class: &str, id: &str) -> bool {
@@ -121,10 +178,15 @@ fn is_view(class: &str, id: &str) -> bool {
     VIEW_WORDS.iter().any(|w| c.contains(w) || i.contains(w))
 }
 
-fn scan(uia: &IUIAutomation, cache: &IUIAutomationCacheRequest, all: &IUIAutomationCondition, h: HWND) -> Result<Vec<RECT>> {
-    let frame = frame_rect(h);
+fn scan(
+    uia: &IUIAutomation,
+    cache: &IUIAutomationCacheRequest,
+    all: &IUIAutomationCondition,
+    h: HWND,
+    frame: RECT,
+) -> Result<Vec<(RECT, IUIAutomationElement)>> {
     let frame_area = (width(&frame) as i64 * height(&frame) as i64).max(1);
-    let mut out: Vec<RECT> = Vec::new();
+    let mut out: Vec<(RECT, IUIAutomationElement)> = Vec::new();
     unsafe {
         let root = uia.ElementFromHandle(h)?;
         let list = root.FindAllBuildCache(TreeScope_Descendants, all, cache)?;
@@ -136,16 +198,7 @@ fn scan(uia: &IUIAutomation, cache: &IUIAutomationCacheRequest, all: &IUIAutomat
             }
             let id = e.CachedAutomationId().map(|b| b.to_string()).unwrap_or_default();
             let kind = e.CachedControlType().unwrap_or_default();
-            let r = e.CachedBoundingRectangle().unwrap_or_default();
-            let r = RECT {
-                left: r.left.max(frame.left),
-                top: r.top.max(frame.top),
-                right: r.right.min(frame.right),
-                bottom: r.bottom.min(frame.bottom),
-            };
-            if width(&r) <= 0 || height(&r) <= 0 {
-                continue;
-            }
+            let Some(r) = relative(e.CachedBoundingRectangle().unwrap_or_default(), frame) else { continue };
             let share = (width(&r) as i64 * height(&r) as i64) as f64 / frame_area as f64;
             let keep = (is_view(&class, &id) && share > 0.08 && share < 0.97)
                 || (kind == UIA_ImageControlTypeId && share > 0.01);
@@ -153,24 +206,19 @@ fn scan(uia: &IUIAutomation, cache: &IUIAutomationCacheRequest, all: &IUIAutomat
                 if std::env::var_os("DEONYX_DEBUG").is_some() {
                     println!("  koru: sinif {class:?} kimlik {id:?} tur {} pay {share:.2}", kind.0);
                 }
-                out.push(RECT {
-                    left: r.left - frame.left,
-                    top: r.top - frame.top,
-                    right: r.right - frame.left,
-                    bottom: r.bottom - frame.top,
-                });
+                out.push((r, e));
             }
         }
     }
     // Drop areas already inside a bigger one.
-    out.sort_by_key(|r| -(width(r) as i64 * height(r) as i64));
-    let mut kept: Vec<RECT> = Vec::new();
-    for r in out {
+    out.sort_by_key(|(r, _)| -(width(r) as i64 * height(r) as i64));
+    let mut kept: Vec<(RECT, IUIAutomationElement)> = Vec::new();
+    for (r, e) in out {
         let inside = kept
             .iter()
-            .any(|k| r.left >= k.left && r.top >= k.top && r.right <= k.right && r.bottom <= k.bottom);
+            .any(|(k, _)| r.left >= k.left && r.top >= k.top && r.right <= k.right && r.bottom <= k.bottom);
         if !inside {
-            kept.push(r);
+            kept.push((r, e));
         }
     }
     Ok(kept)

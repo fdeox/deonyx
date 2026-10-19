@@ -38,6 +38,10 @@ pub struct Status {
     pub enabled: bool,
     /// Lower-case exe name -> number of its main windows being darkened.
     pub running: HashMap<String, usize>,
+    /// Lower-case exe name -> main windows left alone because the program
+    /// runs as administrator and we don't: Windows won't let a layer sit
+    /// on them.
+    pub admin: HashMap<String, usize>,
 }
 
 pub type OnStatus = Box<dyn Fn(Status) + Send>;
@@ -99,6 +103,9 @@ struct Manager {
     split: bool,
     layers: HashMap<isize, Layer>,
     exe_of: HashMap<u32, Option<String>>,
+    elevated: HashMap<u32, bool>,
+    admin_ok: bool,
+    admin: HashMap<String, usize>,
     ignored: HashSet<isize>,
     finder: Finder,
     protect: HashMap<isize, Vec<RECT>>,
@@ -124,8 +131,13 @@ impl Manager {
         if !self.enabled {
             return None;
         }
+        // Cheap checks first: most windows belong to programs we don't touch,
+        // and those never cost a call to the compositor.
+        let pid = window_pid(h);
+        let key = self.exe_key(pid)?;
+        let rule = self.rules.get(&key)?.clone();
         unsafe {
-            if !IsWindowVisible(h).as_bool() || !is_top_level(h) || is_cloaked(h) {
+            if !IsWindowVisible(h).as_bool() || !is_top_level(h) {
                 return None;
             }
             let ex = GetWindowLongW(h, GWL_EXSTYLE) as u32;
@@ -134,13 +146,19 @@ impl Manager {
                 return None;
             }
         }
-        let r = frame_rect(h);
-        if width(&r) < 4 || height(&r) < 4 {
+        if is_cloaked(h) || class_name(h) == OVERLAY_CLASS {
             return None;
         }
-        let key = self.exe_key(window_pid(h))?;
-        let rule = self.rules.get(&key)?.clone();
-        (class_name(h) != OVERLAY_CLASS).then_some(rule)
+        let r = frame_rect(h);
+        if width(&r) < 4 || height(&r) < 4 || self.above_us(pid) {
+            return None;
+        }
+        Some(rule)
+    }
+
+    /// A program running as administrator while we don't.
+    fn above_us(&mut self, pid: u32) -> bool {
+        !self.admin_ok && *self.elevated.entry(pid).or_insert_with(|| is_elevated(pid))
     }
 
     fn add(&mut self, h: HWND) {
@@ -156,6 +174,10 @@ impl Manager {
                     eprintln!("kare bildirimi kurulamadi: {e}");
                 }
                 l.exe = rule.key();
+                if std::env::var_os("DEONYX_DEBUG").is_some() {
+                    let r = frame_rect(h);
+                    println!("+ {} {} {}x{} @ {},{} sahip={}", rule.exe, class_name(h), width(&r), height(&r), r.left, r.top, l.owned);
+                }
                 if rule.protect {
                     if let Some(p) = self.protect.get(&key) {
                         l.protect = p.clone();
@@ -196,11 +218,27 @@ impl Manager {
     }
 
     fn rescan(&mut self) {
-        if !self.enabled {
-            return;
+        let mut admin: HashMap<String, usize> = HashMap::new();
+        if self.enabled {
+            for h in top_level_windows() {
+                self.add(h);
+                if self.admin_ok {
+                    continue;
+                }
+                let pid = window_pid(h);
+                let Some(key) = self.exe_key(pid) else { continue };
+                if !self.rules.contains_key(&key) {
+                    continue;
+                }
+                let main = unsafe { IsWindowVisible(h).as_bool() && GetWindow(h, GW_OWNER).is_err() } && is_top_level(h);
+                if main && self.above_us(pid) {
+                    *admin.entry(key).or_default() += 1;
+                }
+            }
         }
-        for h in top_level_windows() {
-            self.add(h);
+        if admin != self.admin {
+            self.admin = admin;
+            self.publish();
         }
     }
 
@@ -244,7 +282,7 @@ impl Manager {
                 *running.entry(l.exe.clone()).or_default() += 1;
             }
         }
-        let s = Status { enabled: self.enabled, running };
+        let s = Status { enabled: self.enabled, running, admin: self.admin.clone() };
         if self.last_status.as_ref() != Some(&s) {
             (self.on_status)(s.clone());
             self.last_status = Some(s);
@@ -318,6 +356,9 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus) -> Result<(
         split: std::env::var_os("DEONYX_SPLIT").is_some(),
         layers: HashMap::new(),
         exe_of: HashMap::new(),
+        elevated: HashMap::new(),
+        admin_ok: is_elevated(std::process::id()),
+        admin: HashMap::new(),
         ignored: HashSet::new(),
         finder: Finder::start(),
         protect: HashMap::new(),
@@ -378,6 +419,7 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus) -> Result<(
             // Process ids get reused; forget old ones now and then.
             if last_purge.elapsed().as_secs() >= 10 {
                 m.exe_of.clear();
+                m.elevated.clear();
                 last_purge = Instant::now();
             }
         }

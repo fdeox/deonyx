@@ -25,7 +25,8 @@ pub struct Params {
     pub sat: f32,
     pub split: f32,
     pub amount: f32,
-    pub pad: [f32; 2],
+    pub fringe: f32,
+    pub pad: f32,
 }
 
 pub struct Gpu {
