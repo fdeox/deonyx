@@ -10,6 +10,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod admin;
 mod apps;
 mod config;
 mod engine;
@@ -43,6 +44,7 @@ struct Snapshot {
     config: Config,
     status: Status,
     version: &'static str,
+    elevated: bool,
 }
 
 #[tauri::command]
@@ -51,6 +53,7 @@ fn get_state(s: tauri::State<State>) -> Snapshot {
         config: s.cfg.lock().unwrap().clone(),
         status: s.status.lock().unwrap().clone(),
         version: env!("CARGO_PKG_VERSION"),
+        elevated: admin::elevated(),
     }
 }
 
@@ -72,14 +75,79 @@ fn pick_exe(app: AppHandle) -> Option<apps::Running> {
 }
 
 #[tauri::command]
-fn get_autostart(app: AppHandle) -> bool {
-    app.autolaunch().is_enabled().unwrap_or(false)
+fn get_autostart(s: tauri::State<State>) -> bool {
+    s.cfg.lock().unwrap().autostart
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
-    let a = app.autolaunch();
-    if on { a.enable() } else { a.disable() }.map_err(|e| e.to_string())
+    let mut c = app.state::<State>().cfg.lock().unwrap().clone();
+    c.autostart = on;
+    sync_startup(&app, &c)?;
+    apply(&app, c)
+}
+
+/// Turns running as administrator on or off. Windows asks the user first;
+/// Deonyx then restarts with or without administrator rights.
+#[tauri::command(async)]
+fn set_admin(app: AppHandle, on: bool) -> Result<(), String> {
+    let mut c = app.state::<State>().cfg.lock().unwrap().clone();
+    if c.admin == on {
+        return Ok(());
+    }
+    let elevated = admin::elevated();
+    if on {
+        if elevated {
+            admin::create_task(c.autostart)?;
+        } else {
+            admin::run_elevated(if c.autostart { "--admin-task create-logon" } else { "--admin-task create" })?;
+        }
+    } else if elevated {
+        admin::delete_task()?;
+    } else {
+        admin::run_elevated("--admin-task delete")?;
+    }
+    c.admin = on;
+    let _ = sync_startup(&app, &c);
+    apply(&app, c)?;
+    if on != elevated {
+        // Come back with the settings open, now with (or without) the rights.
+        let _ = std::fs::write(config::dir().join("open-settings"), b"");
+        if on {
+            admin::relaunch_elevated();
+        } else {
+            admin::relaunch_normal();
+        }
+        let a = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            a.state::<State>().engine.send(Cmd::Quit);
+            a.exit(0);
+        });
+    }
+    Ok(())
+}
+
+/// Starting with Windows goes through the Run key normally, and through the
+/// task's logon trigger when running as administrator (Windows doesn't start
+/// administrator programs from the Run key).
+fn sync_startup(app: &AppHandle, c: &Config) -> Result<(), String> {
+    let auto = app.autolaunch();
+    if c.admin {
+        let _ = auto.disable();
+        if admin::elevated() {
+            admin::create_task(c.autostart)
+        } else {
+            admin::run_elevated(if c.autostart { "--admin-task create-logon" } else { "--admin-task create" })
+        }
+    } else if c.autostart {
+        auto.enable().map_err(|e| e.to_string())
+    } else {
+        if auto.is_enabled().unwrap_or(false) {
+            auto.disable().map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
 }
 
 /// Saves the settings and hands them to the engine.
@@ -171,8 +239,34 @@ fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<CheckMenuItem<Wry
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let hidden = args.iter().any(|a| a == "--hidden");
+    let has = |flag: &str| args.iter().any(|a| a == flag);
+
+    // Helper run, as administrator, by admin::run_elevated.
+    if let Some(i) = args.iter().position(|a| a == "--admin-task") {
+        let r = match args.get(i + 1).map(String::as_str) {
+            Some("create-logon") => admin::create_task(true),
+            Some("create") => admin::create_task(false),
+            Some("delete") => admin::delete_task(),
+            _ => Err("unknown".into()),
+        };
+        std::process::exit(if r.is_ok() { 0 } else { 1 });
+    }
+    // Started by the task right after the old instance quit: let it go first.
+    if has("--from-task") {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+    }
+
     let mut cfg = config::load();
+    if cfg.admin && !admin::elevated() {
+        // Running as administrator is on: hand over to the running Deonyx,
+        // or start it through the task.
+        if admin::ask_running_to_open() || admin::run_task() {
+            return;
+        }
+    }
+    let marker = config::dir().join("open-settings");
+    let reopen = std::fs::remove_file(&marker).is_ok();
+    let hidden = has("--hidden") && !reopen;
     // For testing: --process X darkens X for this run without saving it.
     let mut it = args.iter().skip(1);
     while let Some(a) = it.next() {
@@ -195,13 +289,28 @@ fn main() {
         .setup(move |app| {
             let handle = app.handle().clone();
             let first_run = cfg.apps.is_empty();
-            let engine = Engine::start(cfg.clone(), Box::new(move |st| on_status(&handle, st)));
+            let opener = app.handle().clone();
+            let engine = Engine::start(
+                cfg.clone(),
+                Box::new(move |st| on_status(&handle, st)),
+                Box::new(move || {
+                    let a = opener.clone();
+                    let _ = opener.run_on_main_thread(move || open_settings(&a));
+                }),
+            );
             app.manage(State {
                 status: Mutex::new(Status { enabled: cfg.enabled, ..Default::default() }),
                 cfg: Mutex::new(cfg.clone()),
                 engine,
                 toggle: Mutex::new(None),
             });
+            // Starting with Windows used to live only in the Run key.
+            if !cfg.admin && !cfg.autostart && app.autolaunch().is_enabled().unwrap_or(false) {
+                let mut c = cfg.clone();
+                c.autostart = true;
+                let _ = config::save(&c);
+                *app.state::<State>().cfg.lock().unwrap() = c;
+            }
             let toggle = build_tray(app.handle(), cfg.enabled)?;
             *app.state::<State>().toggle.lock().unwrap() = Some(toggle);
             if !hidden || first_run {
@@ -209,7 +318,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_state, set_config, running_apps, pick_exe, get_autostart, set_autostart])
+        .invoke_handler(tauri::generate_handler![get_state, set_config, running_apps, pick_exe, get_autostart, set_autostart, set_admin])
         .build(tauri::generate_context!())
         .expect("Deonyx failed to start")
         .run(|_app, event| {

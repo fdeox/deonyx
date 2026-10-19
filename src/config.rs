@@ -58,11 +58,15 @@ impl AppRule {
 pub struct Config {
     pub enabled: bool,
     pub apps: Vec<AppRule>,
+    /// Start with Windows.
+    pub autostart: bool,
+    /// Run as administrator, through a scheduled task (admin.rs).
+    pub admin: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { enabled: true, apps: Vec::new() }
+        Config { enabled: true, apps: Vec::new(), autostart: false, admin: false }
     }
 }
 

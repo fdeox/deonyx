@@ -10,9 +10,10 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use serde::Serialize;
-use windows::core::Result;
+use windows::core::{w, Result};
 use windows::Win32::Foundation::*;
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{CreateEventW, GetCurrentThreadId};
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT};
@@ -45,6 +46,7 @@ pub struct Status {
 }
 
 pub type OnStatus = Box<dyn Fn(Status) + Send>;
+pub type OnOpen = Box<dyn Fn() + Send>;
 
 pub struct Engine {
     tid: u32,
@@ -53,7 +55,7 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn start(cfg: Config, on_status: OnStatus) -> Engine {
+    pub fn start(cfg: Config, on_status: OnStatus, on_open: OnOpen) -> Engine {
         let cmds = Arc::new(Mutex::new(Vec::new()));
         let (tx, rx) = mpsc::channel();
         let queue = cmds.clone();
@@ -67,7 +69,7 @@ impl Engine {
                     let _ = PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE);
                     let _ = tx.send(GetCurrentThreadId());
                 }
-                if let Err(e) = run(cfg, queue, on_status) {
+                if let Err(e) = run(cfg, queue, on_status, on_open) {
                     eprintln!("motor durdu: {e}");
                 }
             })
@@ -346,8 +348,46 @@ impl Manager {
     }
 }
 
-fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus) -> Result<()> {
+unsafe extern "system" fn signal_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    DefWindowProcW(h, m, w, l)
+}
+
+/// The hidden window a second launch looks for (see admin.rs).
+fn signal_window(msg: u32) -> Option<HWND> {
+    unsafe {
+        let hinst = GetModuleHandleW(None).ok()?;
+        let wc = WNDCLASSW {
+            lpfnWndProc: Some(signal_proc),
+            hInstance: hinst.into(),
+            lpszClassName: crate::admin::SIGNAL_CLASS,
+            ..Default::default()
+        };
+        RegisterClassW(&wc);
+        let h = CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            crate::admin::SIGNAL_CLASS,
+            w!("Deonyx"),
+            WS_POPUP,
+            0,
+            0,
+            0,
+            0,
+            None,
+            None,
+            Some(hinst.into()),
+            None,
+        )
+        .ok()?;
+        // Lets a Deonyx without administrator rights reach us when we have them.
+        let _ = ChangeWindowMessageFilterEx(h, msg, MSGFLT_ALLOW, None);
+        Some(h)
+    }
+}
+
+fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_open: OnOpen) -> Result<()> {
     crate::layer::register_class()?;
+    let open_msg = unsafe { RegisterWindowMessageW(crate::admin::OPEN_MSG) };
+    let signal = signal_window(open_msg);
     let frame_event = unsafe { CreateEventW(None, false, false, None)? };
     let mut m = Manager {
         gpu: Gpu::new()?,
@@ -388,6 +428,10 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus) -> Result<(
         'outer: loop {
             MsgWaitForMultipleObjects(Some(&[frame_event]), false, 250, QS_ALLINPUT);
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                if msg.message == open_msg {
+                    on_open();
+                    continue;
+                }
                 match msg.message {
                     WM_HOTKEY => m.toggle(),
                     WM_ENGINE => {
@@ -424,6 +468,9 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus) -> Result<(
             }
         }
         m.layers.clear();
+        if let Some(h) = signal {
+            let _ = DestroyWindow(h);
+        }
         for h in hooks {
             let _ = UnhookWinEvent(h);
         }

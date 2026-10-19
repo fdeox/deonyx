@@ -7,6 +7,7 @@ const { listen } = window.__TAURI__.event;
 let config = { enabled: true, apps: [] };
 let status = { enabled: true, running: {} };
 let version = "";
+let elevated = false;
 const open = new Set();
 
 const $ = (id) => document.getElementById(id);
@@ -29,7 +30,7 @@ function stateText(app) {
   if (!app.enabled) return { live: false, text: "Off" };
   const n = status.running?.[key(app.exe)] ?? 0;
   if (n > 0) return { live: true, text: n === 1 ? "Darkening 1 window" : `Darkening ${n} windows` };
-  if ((status.admin?.[key(app.exe)] ?? 0) > 0) return { live: false, text: "Runs as administrator, which Deonyx can't darken yet" };
+  if ((status.admin?.[key(app.exe)] ?? 0) > 0) return { live: false, text: "Runs as administrator. Turn on Run as administrator below." };
   return { live: false, text: "Waiting for it to open" };
 }
 
@@ -93,7 +94,8 @@ function renderStates() {
 function render() {
   renderMaster();
   renderApps();
-  $("footer").textContent = `Deonyx ${version} · free software under the GPL-3.0 · made by fdeox`;
+  $("footer").textContent = `Deonyx ${version}${elevated ? " · running as administrator" : ""} · free software under the GPL-3.0 · made by fdeox`;
+  $("admin").checked = !!config.admin;
 }
 
 // App list interactions, delegated.
@@ -138,7 +140,25 @@ $("master").addEventListener("change", (e) => {
 });
 
 $("autostart").addEventListener("change", (e) => {
-  invoke("set_autostart", { on: e.target.checked }).catch(() => { e.target.checked = !e.target.checked; });
+  const on = e.target.checked;
+  invoke("set_autostart", { on }).then(() => { config.autostart = on; }).catch(() => { e.target.checked = !on; });
+});
+
+const ADMIN_NOTE = $("admin-note").textContent;
+$("admin").addEventListener("change", async (e) => {
+  const sw = e.target;
+  const on = sw.checked;
+  sw.disabled = true;
+  $("admin-note").textContent = "Waiting for Windows…";
+  try {
+    await invoke("set_admin", { on });
+    config.admin = on;
+    $("admin-note").textContent = on === elevated ? ADMIN_NOTE : "Restarting Deonyx…";
+  } catch (err) {
+    sw.checked = !on;
+    $("admin-note").textContent = String(err);
+  }
+  sw.disabled = false;
 });
 
 // "Add an app" panel.
@@ -192,6 +212,7 @@ async function init() {
   config = s.config;
   status = s.status;
   version = s.version;
+  elevated = s.elevated;
   render();
   $("autostart").checked = await invoke("get_autostart");
   await listen("status", (e) => {
