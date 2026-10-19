@@ -62,6 +62,8 @@ struct Probe {
 
 pub struct Layer {
     pub target: HWND,
+    /// Lower-case exe name of the program this window belongs to.
+    pub exe: String,
     pub overlay: HWND,
     pool: Direct3D11CaptureFramePool,
     session: GraphicsCaptureSession,
@@ -141,6 +143,7 @@ impl Layer {
 
             let mut layer = Layer {
                 target,
+                exe: String::new(),
                 overlay,
                 pool,
                 session,

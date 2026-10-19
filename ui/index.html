@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deonyx</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app">
+    <header class="top">
+      <img class="logo" src="logo.svg" alt="">
+      <div class="brand">
+        <h1>Deonyx</h1>
+        <p>Dark mode for any app</p>
+      </div>
+      <label class="master">
+        <span class="master-text">
+          <strong id="master-label">On</strong>
+          <kbd>Ctrl+Alt+D</kbd>
+        </span>
+        <input type="checkbox" class="switch big" id="master">
+      </label>
+    </header>
+
+    <section>
+      <div class="section-head">
+        <div>
+          <h2>Apps</h2>
+          <p class="hint">Deonyx darkens these programs whenever they're open.</p>
+        </div>
+        <button class="primary" id="add">Add an app</button>
+      </div>
+      <div id="picker" class="picker" hidden></div>
+      <div id="apps" class="apps"></div>
+    </section>
+
+    <section>
+      <h2>General</h2>
+      <div class="rows">
+        <label class="row">
+          <span>
+            <strong>Start with Windows</strong>
+            <small>Deonyx waits quietly in the tray.</small>
+          </span>
+          <input type="checkbox" class="switch" id="autostart">
+        </label>
+        <div class="row">
+          <span>
+            <strong>Turn darkening on and off</strong>
+            <small>Works anywhere, even when this window is closed.</small>
+          </span>
+          <kbd>Ctrl+Alt+D</kbd>
+        </div>
+      </div>
+    </section>
+
+    <footer id="footer"></footer>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

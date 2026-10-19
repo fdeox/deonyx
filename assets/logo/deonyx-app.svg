@@ -39,11 +39,22 @@
       <polygon points="41,82 82,82 100,184" fill="#1a1a23"/>
       <polygon points="82,82 118,82 100,184" fill="#0b0b10"/>
     </g>
+    <!-- night sky in the onyx -->
+    <g clip-path="url(#app-left)" fill="#cfc7ff">
+      <path d="M47.0 62.4 L48.2 65.8 L51.6 67.0 L48.2 68.2 L47.0 71.6 L45.8 68.2 L42.4 67.0 L45.8 65.8 Z" opacity="1"/>
+      <path d="M76.0 51.0 L76.8 53.2 L79.0 54.0 L76.8 54.8 L76.0 57.0 L75.2 54.8 L73.0 54.0 L75.2 53.2 Z" opacity="0.85"/>
+      <path d="M62.0 99.6 L62.9 102.1 L65.4 103.0 L62.9 103.9 L62.0 106.4 L61.1 103.9 L58.6 103.0 L61.1 102.1 Z" opacity="0.9"/>
+      <path d="M86.0 125.4 L86.7 127.3 L88.6 128.0 L86.7 128.7 L86.0 130.6 L85.3 128.7 L83.4 128.0 L85.3 127.3 Z" opacity="0.75"/>
+      <circle cx="34" cy="79" r="1.3" opacity="0.7"/>
+      <circle cx="88" cy="86" r="1.4" opacity="0.8"/>
+      <circle cx="52" cy="88" r="1.0" opacity="0.6"/>
+      <circle cx="77" cy="112" r="1.1" opacity="0.65"/>
+      <circle cx="90" cy="152" r="1.2" opacity="0.7"/>
+      <circle cx="70" cy="72" r="0.9" opacity="0.55"/>
+    </g>
     <!-- the line where light turns dark -->
     <rect x="98.5" y="36" width="3" height="152" fill="#a99cff"/>
   </g>
-  <!-- a star caught in the onyx -->
-  <path d="M52 52 L54.2 59.8 L62 62 L54.2 64.2 L52 72 L49.8 64.2 L42 62 L49.8 59.8 Z" fill="#cfc7ff"/>
   <polygon points="64,40 136,40 182,82 100,184 18,82" fill="none" stroke="#8b7cf6" stroke-width="6" stroke-linejoin="round"/>
   </g>
 </svg>

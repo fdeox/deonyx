@@ -27,10 +27,10 @@ Needs Windows 11 (Windows 10 version 2004 or later should work but is untested) 
 
 ```
 cargo build --release
-target\release\deonyx.exe --process SketchUp.exe
+target\release\deonyx.exe
 ```
 
-Ctrl+Alt+D turns darkening on and off.
+Deonyx lives in the tray. Click its icon, choose **Add an app**, and pick a program from the list of open ones (or browse for it). Each app has its own background darkness and text brightness, and Ctrl+Alt+D turns darkening on and off from anywhere. Settings are kept in `%APPDATA%\Deonyx\config.json`.
 
 ## License
 
