@@ -68,6 +68,16 @@ fn running_apps() -> Vec<apps::Running> {
 }
 
 #[tauri::command(async)]
+fn installed_apps() -> Vec<apps::Running> {
+    apps::installed()
+}
+
+#[tauri::command(async)]
+fn app_icons(paths: Vec<String>) -> Vec<Option<String>> {
+    apps::icons(&paths)
+}
+
+#[tauri::command(async)]
 fn pick_exe(app: AppHandle) -> Option<apps::Running> {
     let picked = app.dialog().file().set_title("Choose a program").add_filter("Programs", &["exe"]).blocking_pick_file()?;
     let path = picked.into_path().ok()?;
@@ -195,6 +205,8 @@ fn open_settings(app: &AppHandle) {
         let _ = w.set_focus();
         return;
     }
+    // Likely next: "Add an app". Have the installed programs ready by then.
+    apps::warm_up();
     let built = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("Deonyx")
         .inner_size(820.0, 640.0)
@@ -279,8 +291,12 @@ fn main() {
         }
     }
 
-    tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| open_settings(app)))
+    let mut builder = tauri::Builder::default();
+    // Tests run with their own settings folder, next to the real Deonyx.
+    if std::env::var_os("DEONYX_CONFIG_DIR").is_none() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| open_settings(app)));
+    }
+    builder
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--hidden"]),
@@ -318,7 +334,7 @@ fn main() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_state, set_config, running_apps, pick_exe, get_autostart, set_autostart, set_admin])
+        .invoke_handler(tauri::generate_handler![get_state, set_config, running_apps, installed_apps, app_icons, pick_exe, get_autostart, set_autostart, set_admin])
         .build(tauri::generate_context!())
         .expect("Deonyx failed to start")
         .run(|_app, event| {
