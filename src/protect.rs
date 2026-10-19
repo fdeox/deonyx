@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use windows::core::Result;
@@ -53,16 +53,20 @@ struct Tracked {
 struct Shared {
     want: Vec<isize>,
     found: HashMap<isize, Vec<RECT>>,
+    /// Windows that just drew something new.
+    poked: HashSet<isize>,
 }
 
+type Guarded = Arc<(Mutex<Shared>, Condvar)>;
+
 pub struct Finder {
-    shared: Arc<Mutex<Shared>>,
+    shared: Guarded,
     dirty: Arc<AtomicBool>,
 }
 
 impl Finder {
     pub fn start() -> Finder {
-        let shared = Arc::new(Mutex::new(Shared::default()));
+        let shared: Guarded = Arc::new((Mutex::new(Shared::default()), Condvar::new()));
         let dirty = Arc::new(AtomicBool::new(false));
         let (s, d) = (shared.clone(), dirty.clone());
         std::thread::spawn(move || {
@@ -74,20 +78,29 @@ impl Finder {
     }
 
     pub fn watch(&self, windows: Vec<isize>) {
-        self.shared.lock().unwrap().want = windows;
+        self.shared.0.lock().unwrap().want = windows;
+    }
+
+    /// The window drew a new frame: check its 3D view soon.
+    pub fn poke(&self, h: isize) {
+        let (m, cv) = &*self.shared;
+        let mut s = m.lock().unwrap();
+        if s.want.contains(&h) && s.poked.insert(h) {
+            cv.notify_one();
+        }
     }
 
     /// New results since the last call, if any.
     pub fn take(&self) -> Option<HashMap<isize, Vec<RECT>>> {
         if self.dirty.swap(false, Ordering::Relaxed) {
-            Some(self.shared.lock().unwrap().found.clone())
+            Some(self.shared.0.lock().unwrap().found.clone())
         } else {
             None
         }
     }
 }
 
-fn run(shared: Arc<Mutex<Shared>>, dirty: Arc<AtomicBool>) -> Result<()> {
+fn run(shared: Guarded, dirty: Arc<AtomicBool>) -> Result<()> {
     unsafe {
         CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
         let uia: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER)?;
@@ -100,9 +113,19 @@ fn run(shared: Arc<Mutex<Shared>>, dirty: Arc<AtomicBool>) -> Result<()> {
         let mut reported = HashSet::new();
         let mut tracked: HashMap<isize, Tracked> = HashMap::new();
         loop {
-            let want = shared.lock().unwrap().want.clone();
+            // Wait for a window to draw something new, or look at all of them
+            // every 700 ms anyway.
+            let (want, poked) = {
+                let (m, cv) = &*shared;
+                let mut s = m.lock().unwrap();
+                if s.poked.is_empty() {
+                    s = cv.wait_timeout(s, Duration::from_millis(700)).unwrap().0;
+                }
+                (s.want.clone(), std::mem::take(&mut s.poked))
+            };
             tracked.retain(|h, _| want.contains(h));
-            for h in want {
+            let list: Vec<isize> = if poked.is_empty() { want } else { want.into_iter().filter(|h| poked.contains(h)).collect() };
+            for h in list {
                 let hwnd = HWND(h as *mut _);
                 let frame = frame_rect(hwnd);
                 let size = (width(&frame), height(&frame));
@@ -132,13 +155,16 @@ fn run(shared: Arc<Mutex<Shared>>, dirty: Arc<AtomicBool>) -> Result<()> {
                         }
                     }
                 };
-                let mut s = shared.lock().unwrap();
+                let mut s = shared.0.lock().unwrap();
                 if s.found.get(&h) != Some(&rects) {
                     s.found.insert(h, rects);
                     dirty.store(true, Ordering::Relaxed);
                 }
             }
-            std::thread::sleep(Duration::from_millis(700));
+            // At most about 30 looks a second while a window keeps drawing.
+            if !poked.is_empty() {
+                std::thread::sleep(Duration::from_millis(30));
+            }
         }
     }
 }

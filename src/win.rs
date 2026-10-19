@@ -6,7 +6,10 @@ use std::mem::size_of;
 use windows::core::{BOOL, PWSTR};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS};
-use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+use windows::Win32::Security::{
+    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TokenElevation, TokenIntegrityLevel, TOKEN_ELEVATION,
+    TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+};
 use windows::Win32::System::Threading::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -47,6 +50,42 @@ pub fn is_elevated(pid: u32) -> bool {
         };
         let _ = CloseHandle(p);
         elevated
+    }
+}
+
+pub const LEVEL_SYSTEM: u32 = 0x4000;
+
+/// Windows integrity level of a process: 0x2000 normal, 0x3000 administrator,
+/// 0x4000 system. Windows lets no window be drawn over by a process with a
+/// lower level. A token we can't read belongs to something above us.
+pub fn integrity(pid: u32) -> u32 {
+    unsafe {
+        let Ok(p) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else { return u32::MAX };
+        let mut tok = HANDLE::default();
+        let mut level = u32::MAX;
+        if OpenProcessToken(p, TOKEN_QUERY, &mut tok).is_ok() {
+            let mut buf = [0u8; 128];
+            let mut len = 0u32;
+            if GetTokenInformation(
+                tok,
+                TokenIntegrityLevel,
+                Some(buf.as_mut_ptr() as *mut c_void),
+                buf.len() as u32,
+                &mut len,
+            )
+            .is_ok()
+            {
+                let label = &*(buf.as_ptr() as *const TOKEN_MANDATORY_LABEL);
+                let sid = label.Label.Sid;
+                let n = *GetSidSubAuthorityCount(sid);
+                if n > 0 {
+                    level = *GetSidSubAuthority(sid, (n - 1) as u32);
+                }
+            }
+            let _ = CloseHandle(tok);
+        }
+        let _ = CloseHandle(p);
+        level
     }
 }
 

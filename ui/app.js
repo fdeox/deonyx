@@ -29,7 +29,13 @@ function stateText(app) {
   if (!config.enabled) return { live: false, text: "Paused" };
   if (!app.enabled) return { live: false, text: "Off" };
   const n = status.running?.[key(app.exe)] ?? 0;
-  if (n > 0) return { live: true, text: n === 1 ? "Darkening 1 window" : `Darkening ${n} windows` };
+  const sys = status.system?.[key(app.exe)] ?? 0;
+  const service = "belong to a Windows service, which Windows lets no app draw over";
+  if (n > 0) {
+    const text = n === 1 ? "Darkening 1 window" : `Darkening ${n} windows`;
+    return { live: true, text: sys > 0 ? `${text}. Others ${service}.` : text };
+  }
+  if (sys > 0) return { live: false, text: `Its open windows ${service}.` };
   if ((status.admin?.[key(app.exe)] ?? 0) > 0) return { live: false, text: "Runs as administrator. Turn on Run as administrator below." };
   return { live: false, text: "Waiting for it to open" };
 }

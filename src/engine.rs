@@ -43,6 +43,9 @@ pub struct Status {
     /// runs as administrator and we don't: Windows won't let a layer sit
     /// on them.
     pub admin: HashMap<String, usize>,
+    /// Same, for windows of a Windows service (system level), which nothing
+    /// can draw over.
+    pub system: HashMap<String, usize>,
 }
 
 pub type OnStatus = Box<dyn Fn(Status) + Send>;
@@ -105,9 +108,10 @@ struct Manager {
     split: bool,
     layers: HashMap<isize, Layer>,
     exe_of: HashMap<u32, Option<String>>,
-    elevated: HashMap<u32, bool>,
-    admin_ok: bool,
+    levels: HashMap<u32, u32>,
+    my_level: u32,
     admin: HashMap<String, usize>,
+    system: HashMap<String, usize>,
     ignored: HashSet<isize>,
     finder: Finder,
     protect: HashMap<isize, Vec<RECT>>,
@@ -158,9 +162,13 @@ impl Manager {
         Some(rule)
     }
 
-    /// A program running as administrator while we don't.
+    fn level(&mut self, pid: u32) -> u32 {
+        *self.levels.entry(pid).or_insert_with(|| integrity(pid))
+    }
+
+    /// A program running with more rights than we have.
     fn above_us(&mut self, pid: u32) -> bool {
-        !self.admin_ok && *self.elevated.entry(pid).or_insert_with(|| is_elevated(pid))
+        self.level(pid) > self.my_level
     }
 
     fn add(&mut self, h: HWND) {
@@ -221,12 +229,10 @@ impl Manager {
 
     fn rescan(&mut self) {
         let mut admin: HashMap<String, usize> = HashMap::new();
+        let mut system: HashMap<String, usize> = HashMap::new();
         if self.enabled {
             for h in top_level_windows() {
                 self.add(h);
-                if self.admin_ok {
-                    continue;
-                }
                 let pid = window_pid(h);
                 let Some(key) = self.exe_key(pid) else { continue };
                 if !self.rules.contains_key(&key) {
@@ -234,12 +240,14 @@ impl Manager {
                 }
                 let main = unsafe { IsWindowVisible(h).as_bool() && GetWindow(h, GW_OWNER).is_err() } && is_top_level(h);
                 if main && self.above_us(pid) {
-                    *admin.entry(key).or_default() += 1;
+                    let into = if self.level(pid) >= LEVEL_SYSTEM { &mut system } else { &mut admin };
+                    *into.entry(key).or_default() += 1;
                 }
             }
         }
-        if admin != self.admin {
+        if admin != self.admin || system != self.system {
             self.admin = admin;
+            self.system = system;
             self.publish();
         }
     }
@@ -284,7 +292,7 @@ impl Manager {
                 *running.entry(l.exe.clone()).or_default() += 1;
             }
         }
-        let s = Status { enabled: self.enabled, running, admin: self.admin.clone() };
+        let s = Status { enabled: self.enabled, running, admin: self.admin.clone(), system: self.system.clone() };
         if self.last_status.as_ref() != Some(&s) {
             (self.on_status)(s.clone());
             self.last_status = Some(s);
@@ -313,9 +321,13 @@ impl Manager {
     }
 
     fn frames(&mut self) {
-        for l in self.layers.values_mut() {
-            if let Err(e) = l.poll(&self.gpu, true) {
-                eprintln!("kare hatasi: {e}");
+        for (k, l) in self.layers.iter_mut() {
+            match l.poll(&self.gpu, true) {
+                // The window changed: if a 3D view moved with it, find out now
+                // rather than at the next round.
+                Ok(true) if self.rules.get(&l.exe).is_some_and(|r| r.protect) => self.finder.poke(*k),
+                Ok(_) => {}
+                Err(e) => eprintln!("kare hatasi: {e}"),
             }
         }
         if self.since.elapsed().as_secs_f64() >= 5.0 {
@@ -396,9 +408,10 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_open: On
         split: std::env::var_os("DEONYX_SPLIT").is_some(),
         layers: HashMap::new(),
         exe_of: HashMap::new(),
-        elevated: HashMap::new(),
-        admin_ok: is_elevated(std::process::id()),
+        levels: HashMap::new(),
+        my_level: integrity(std::process::id()),
         admin: HashMap::new(),
+        system: HashMap::new(),
         ignored: HashSet::new(),
         finder: Finder::start(),
         protect: HashMap::new(),
@@ -463,7 +476,7 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_open: On
             // Process ids get reused; forget old ones now and then.
             if last_purge.elapsed().as_secs() >= 10 {
                 m.exe_of.clear();
-                m.elevated.clear();
+                m.levels.clear();
                 last_purge = Instant::now();
             }
         }
