@@ -16,7 +16,7 @@ use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{CreateEventW, GetCurrentThreadId};
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
-use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT};
+use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::config::{AppRule, Area, Config};
@@ -794,8 +794,13 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_request:
             hook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE),
             hook(EVENT_OBJECT_CLOAKED, EVENT_OBJECT_UNCLOAKED),
         ];
-        let all = RegisterHotKey(None, HOTKEY_ALL, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, b'D' as u32).is_ok();
-        let front = RegisterHotKey(None, HOTKEY_FRONT, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, b'F' as u32).is_ok();
+        // Test copies add Shift, so they never fight the real Deonyx for its keys.
+        let mut mods = MOD_CONTROL | MOD_ALT | MOD_NOREPEAT;
+        if std::env::var_os("DEONYX_CONFIG_DIR").is_some() {
+            mods |= MOD_SHIFT;
+        }
+        let all = RegisterHotKey(None, HOTKEY_ALL, mods, b'D' as u32).is_ok();
+        let front = RegisterHotKey(None, HOTKEY_FRONT, mods, b'F' as u32).is_ok();
         if !all || !front {
             eprintln!("bir kisayol baska bir program tarafindan kullaniliyor");
         }
