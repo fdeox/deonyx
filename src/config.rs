@@ -102,7 +102,7 @@ pub struct Config {
     pub autostart: bool,
     /// Run as administrator, through a scheduled task (admin.rs).
     pub admin: bool,
-    /// "auto", "en" or "tr".
+    /// "auto" (the same as Windows) or one of LANGS.
     pub language: String,
     /// Look for a new version now and then.
     pub updates: bool,
@@ -128,20 +128,13 @@ impl Default for Config {
     }
 }
 
+/// The languages Deonyx speaks.
+pub const LANGS: &[&str] = &["en", "tr", "de", "fr", "es", "it", "pt", "ru", "uk", "nl", "ja", "ko", "zh"];
+
 impl Config {
-    /// Language actually used: "tr" or "en".
+    /// Language actually used, one of LANGS.
     pub fn lang(&self) -> &'static str {
-        match self.language.as_str() {
-            "tr" => "tr",
-            "en" => "en",
-            _ => {
-                if crate::win::system_is_turkish() {
-                    "tr"
-                } else {
-                    "en"
-                }
-            }
-        }
+        LANGS.iter().find(|l| **l == self.language).copied().unwrap_or_else(crate::win::system_language)
     }
 }
 

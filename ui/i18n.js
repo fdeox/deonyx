@@ -1,4 +1,5 @@
-// Texts of the settings window in English and Turkish.
+// Texts of the settings window in English and Turkish; the other languages
+// add themselves from lang/. A text missing there falls back to English.
 
 const STRINGS = {
   en: {

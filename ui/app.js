@@ -31,9 +31,13 @@ function toast(msg) {
   toastTimer = setTimeout(() => (el.hidden = true), 3200);
 }
 
+// The language Windows shows itself in, as Deonyx names it.
+let systemLang = "";
+
 function chooseLang() {
-  const sys = (navigator.language || "en").toLowerCase().startsWith("tr") ? "tr" : "en";
-  LANG = config.language === "tr" || config.language === "en" ? config.language : sys;
+  const nav = (navigator.language || "en").toLowerCase();
+  const sys = STRINGS[systemLang] ? systemLang : Object.keys(STRINGS).find((c) => nav === c || nav.startsWith(c + "-")) || "en";
+  LANG = STRINGS[config.language] ? config.language : sys;
 }
 
 function iconHtml(app) {
@@ -539,6 +543,7 @@ async function init() {
   version = s.version;
   elevated = s.elevated;
   update = s.update;
+  systemLang = s.system_lang;
   render();
   await listen("status", (e) => {
     const wasInspecting = status.inspecting;

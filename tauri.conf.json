@@ -38,7 +38,18 @@
         "uninstallerHeaderImage": "installer/header.bmp",
         "languages": [
           "English",
-          "Turkish"
+          "Turkish",
+          "German",
+          "French",
+          "Spanish",
+          "Italian",
+          "PortugueseBR",
+          "Dutch",
+          "Russian",
+          "Ukrainian",
+          "Japanese",
+          "Korean",
+          "SimpChinese"
         ],
         "displayLanguageSelector": false
       }

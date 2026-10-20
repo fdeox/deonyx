@@ -57,6 +57,10 @@ button {
   border-radius: 8px;
   padding: 7px 14px;
   cursor: pointer;
+  /* Button words never break (Japanese, Chinese and Korean would break
+     anywhere); the text next to them wraps instead. */
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 button:hover { border-color: var(--accent); }
 button:focus-visible, input:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 2px; }
@@ -226,6 +230,7 @@ footer { margin-top: 28px; color: var(--faint); font-size: 12px; text-align: cen
 
 /* segmented choices */
 .seg {
+  flex-shrink: 0;
   display: inline-flex;
   padding: 3px;
   gap: 3px;

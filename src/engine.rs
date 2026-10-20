@@ -9,7 +9,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use windows::core::{w, Result};
 use windows::Win32::Foundation::*;
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
@@ -21,6 +21,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::config::{AppRule, Area, Config};
 use crate::gpu::Gpu;
+use crate::helper::{self, Helper};
 use crate::layer::{Layer, Look, OVERLAY_CLASS};
 use crate::protect::Finder;
 use crate::select;
@@ -61,6 +62,16 @@ const SHELL_EXES: &[&str] = &[
     "xboxgamebarwidgets.exe",
 ];
 
+/// Which copy of Deonyx this engine runs in (see helper.rs).
+#[derive(Clone, Copy, PartialEq)]
+pub enum Role {
+    /// The one with the tray. Running as administrator, it leaves normal
+    /// apps to a helper.
+    Main,
+    /// The helper, started by the main one (whose process id this is).
+    Helper { parent: u32 },
+}
+
 pub enum Cmd {
     Config(Config),
     /// Wait for a click on a window, then explain what Deonyx does with it.
@@ -93,7 +104,8 @@ pub struct Report {
     pub reason: String,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Status {
     pub enabled: bool,
     /// On, but the schedule says not now.
@@ -109,6 +121,16 @@ pub struct Status {
     pub system: HashMap<String, usize>,
     /// Waiting for a click, for "Why isn't this window dark?".
     pub inspecting: bool,
+    /// From the helper only: its window, and every window it has a layer on
+    /// (true when that one is dark already and left as it is).
+    #[serde(skip_serializing_if = "is_zero")]
+    pub hwnd: isize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub windows: Vec<(isize, bool)>,
+}
+
+fn is_zero(v: &isize) -> bool {
+    *v == 0
 }
 
 pub type OnStatus = Box<dyn Fn(Status) + Send>;
@@ -121,7 +143,7 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn start(cfg: Config, on_status: OnStatus, on_request: OnRequest) -> Engine {
+    pub fn start(cfg: Config, role: Role, on_status: OnStatus, on_request: OnRequest) -> Engine {
         let cmds = Arc::new(Mutex::new(Vec::new()));
         let (tx, rx) = mpsc::channel();
         let queue = cmds.clone();
@@ -135,7 +157,7 @@ impl Engine {
                     let _ = PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE);
                     let _ = tx.send(GetCurrentThreadId());
                 }
-                if let Err(e) = run(cfg, queue, on_status, on_request) {
+                if let Err(e) = run(cfg, role, queue, on_status, on_request) {
                     eprintln!("motor durdu: {e}");
                 }
             })
@@ -155,6 +177,8 @@ impl Engine {
 thread_local! {
     static EVENTS: RefCell<Vec<(u32, isize)>> = const { RefCell::new(Vec::new()) };
     static PICK: RefCell<Option<Pick>> = const { RefCell::new(None) };
+    /// WM_COPYDATA from the other copy: kind, sender's process, bytes.
+    static INBOX: RefCell<Vec<(usize, u32, Vec<u8>)>> = const { RefCell::new(Vec::new()) };
 }
 
 unsafe extern "system" fn win_event(_: HWINEVENTHOOK, event: u32, hwnd: HWND, obj: i32, child: i32, _: u32, _: u32) {
@@ -233,6 +257,18 @@ struct Manager {
     on_request: OnRequest,
     last_status: Option<Status>,
     drawing: Option<String>,
+    role: Role,
+    /// Main copy with a helper: only apps with more rights than a normal
+    /// program are ours, the helper darkens the rest.
+    upper: bool,
+    helper: Option<Helper>,
+    /// What the helper last said it darkens.
+    helper_status: Option<Status>,
+    helper_starts: Vec<Instant>,
+    /// The settings as last applied, for the helper.
+    last_cfg: Option<Config>,
+    /// Our hidden window: the signal window, or the helper's.
+    window: Option<HWND>,
 }
 
 fn minutes(hhmm: &str) -> u32 {
@@ -260,8 +296,16 @@ impl Manager {
         }
     }
 
+    /// The other copy of Deonyx (see helper.rs).
+    fn other_pid(&self) -> Option<u32> {
+        match self.role {
+            Role::Helper { parent } => Some(parent),
+            Role::Main => self.helper.as_ref().map(|h| h.pid),
+        }
+    }
+
     fn exe_key(&mut self, pid: u32) -> Option<String> {
-        if pid == std::process::id() {
+        if pid == std::process::id() || Some(pid) == self.other_pid() {
             return None;
         }
         self.exe_of
@@ -323,10 +367,16 @@ impl Manager {
             return None;
         }
         let r = frame_rect(h);
-        if width(&r) < 4 || height(&r) < 4 || self.above_us(pid) {
+        if width(&r) < 4 || height(&r) < 4 || !self.mine(pid) {
             return None;
         }
         Some(rule)
+    }
+
+    /// Whether this copy darkens the program's windows: never above our own
+    /// rights, and with a helper only those above a normal program's.
+    fn mine(&mut self, pid: u32) -> bool {
+        !self.above_us(pid) && (!self.upper || self.level(pid) > LEVEL_MEDIUM)
     }
 
     fn level(&mut self, pid: u32) -> u32 {
@@ -424,6 +474,7 @@ impl Manager {
     }
 
     fn apply(&mut self, cfg: Config) {
+        self.last_cfg = Some(cfg.clone());
         self.enabled = cfg.enabled;
         self.all_rules = cfg.apps.iter().filter(|r| !r.exe.is_empty()).map(|r| (r.key(), r.clone())).collect();
         self.rules = self.all_rules.iter().filter(|(_, r)| r.enabled).map(|(k, r)| (k.clone(), r.clone())).collect();
@@ -434,6 +485,70 @@ impl Manager {
         self.schedule = (cfg.schedule, minutes(&cfg.from), minutes(&cfg.to));
         self.in_time = self.schedule_allows();
         self.refresh();
+        self.tell_helper();
+    }
+
+    /// Hands the settings to the helper, if there is one.
+    fn tell_helper(&self) {
+        if let (Some(to), Some(cfg)) = (self.helper.as_ref().and_then(|h| h.window), &self.last_cfg) {
+            helper::send(to, self.window, helper::CONFIG, cfg);
+        }
+    }
+
+    fn start_helper(&mut self) {
+        let Some(window) = self.window else { return };
+        match Helper::spawn(window) {
+            Ok(h) => {
+                self.helper = Some(h);
+                self.helper_starts.push(Instant::now());
+                self.upper = true;
+            }
+            Err(e) => eprintln!("yardimci baslatilamadi: {e}"),
+        }
+    }
+
+    /// Starts the helper again if it died; if it keeps dying, darkens
+    /// everything here instead, like without one.
+    fn watch_helper(&mut self) {
+        if self.helper.as_ref().is_none_or(|h| h.alive()) {
+            return;
+        }
+        self.helper = None;
+        self.helper_status = None;
+        self.helper_starts.retain(|t| t.elapsed() < Duration::from_secs(300));
+        if self.helper_starts.len() < 3 {
+            self.start_helper();
+        }
+        if self.helper.is_none() {
+            self.upper = false;
+        }
+        self.refresh();
+    }
+
+    /// A WM_COPYDATA from the other copy.
+    fn receive(&mut self, kind: usize, from: u32, bytes: &[u8]) {
+        match self.role {
+            Role::Main if kind == helper::STATUS && self.helper.as_ref().is_some_and(|h| h.pid == from) => {
+                let Ok(st) = serde_json::from_slice::<Status>(bytes) else { return };
+                let hello = self.helper.as_ref().is_some_and(|h| h.window.is_none());
+                if let Some(h) = self.helper.as_mut() {
+                    if st.hwnd != 0 {
+                        h.window = Some(HWND(st.hwnd as *mut c_void));
+                    }
+                }
+                self.helper_status = Some(st);
+                if hello {
+                    self.tell_helper();
+                }
+                self.publish();
+            }
+            Role::Helper { parent } if kind == helper::CONFIG && from == parent => {
+                if let Ok(cfg) = serde_json::from_slice::<Config>(bytes) {
+                    self.apply(cfg);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Re-applies the rules to every layer, and drops what no longer fits.
@@ -445,7 +560,9 @@ impl Manager {
         let keep: Vec<isize> = self.layers.keys().copied().collect();
         for k in keep {
             let exe = self.layers[&k].exe.clone();
-            let Some(rule) = self.rule_of(&exe) else {
+            let pid = window_pid(self.layers[&k].target);
+            let rule = if self.mine(pid) { self.rule_of(&exe) } else { None };
+            let Some(rule) = rule else {
                 self.layers.remove(&k);
                 continue;
             };
@@ -467,7 +584,11 @@ impl Manager {
 
     fn toggle(&mut self) {
         self.enabled = !self.enabled;
+        if let Some(c) = self.last_cfg.as_mut() {
+            c.enabled = self.enabled;
+        }
         self.refresh();
+        self.tell_helper();
     }
 
     fn check_schedule(&mut self) {
@@ -486,6 +607,17 @@ impl Manager {
                 *running.entry(l.exe.clone()).or_default() += 1;
             }
         }
+        if let Some(hs) = &self.helper_status {
+            for (exe, n) in &hs.running {
+                *running.entry(exe.clone()).or_default() += n;
+            }
+        }
+        let is_helper = matches!(self.role, Role::Helper { .. });
+        let mut windows: Vec<(isize, bool)> = Vec::new();
+        if is_helper {
+            windows = self.layers.iter().map(|(k, l)| (*k, l.left_as_is())).collect();
+            windows.sort_unstable();
+        }
         let s = Status {
             enabled: self.enabled,
             waiting: self.enabled && !self.in_time,
@@ -493,6 +625,8 @@ impl Manager {
             admin: self.admin.clone(),
             system: self.system.clone(),
             inspecting: PICK.with(|p| p.borrow().is_some()),
+            hwnd: if is_helper { self.window.map_or(0, |h| h.0 as isize) } else { 0 },
+            windows,
         };
         if self.last_status.as_ref() != Some(&s) {
             (self.on_status)(s.clone());
@@ -604,12 +738,23 @@ impl Manager {
         let class = class_name(h);
         let mut affinity = 0u32;
         let ex = unsafe { GetWindowLongW(h, GWL_EXSTYLE) } as u32;
-        r.reason = if pid == std::process::id() {
+        let by_helper = self
+            .helper_status
+            .as_ref()
+            .and_then(|s| s.windows.iter().find(|(w, _)| *w == h.0 as isize))
+            .map(|(_, dark)| *dark);
+        r.reason = if pid == std::process::id() || Some(pid) == self.other_pid() {
             "own"
         } else if SHELL_CLASSES.contains(&class.as_str()) || SHELL_EXES.contains(&key.as_str()) {
             "shell"
         } else if let Some(l) = self.layers.get(&(h.0 as isize)) {
             if l.left_as_is() {
+                "already_dark"
+            } else {
+                "darkened"
+            }
+        } else if let Some(dark) = by_helper {
+            if dark {
                 "already_dark"
             } else {
                 "darkened"
@@ -715,8 +860,45 @@ impl Manager {
     }
 }
 
+/// The hidden windows' procedure: keeps what the other copy sends.
 unsafe extern "system" fn signal_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
+    if m == WM_COPYDATA {
+        if let Some(got) = helper::received(w, l) {
+            INBOX.with(|i| i.borrow_mut().push(got));
+            return LRESULT(1);
+        }
+        return LRESULT(0);
+    }
     DefWindowProcW(h, m, w, l)
+}
+
+/// The helper's hidden window, which the main copy sends the settings to.
+fn helper_window() -> Option<HWND> {
+    unsafe {
+        let hinst = GetModuleHandleW(None).ok()?;
+        let wc = WNDCLASSW {
+            lpfnWndProc: Some(signal_proc),
+            hInstance: hinst.into(),
+            lpszClassName: w!("DeonyxHelper"),
+            ..Default::default()
+        };
+        RegisterClassW(&wc);
+        CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            w!("DeonyxHelper"),
+            w!("Deonyx helper"),
+            WINDOW_STYLE(0),
+            0,
+            0,
+            0,
+            0,
+            Some(HWND_MESSAGE),
+            None,
+            Some(hinst.into()),
+            None,
+        )
+        .ok()
+    }
 }
 
 /// The hidden window a second launch looks for (see admin.rs).
@@ -745,16 +927,21 @@ fn signal_window(msg: u32) -> Option<HWND> {
             None,
         )
         .ok()?;
-        // Lets a Deonyx without administrator rights reach us when we have them.
+        // Lets a Deonyx without administrator rights reach us when we have
+        // them: a second launch, and our helper.
         let _ = ChangeWindowMessageFilterEx(h, msg, MSGFLT_ALLOW, None);
+        let _ = ChangeWindowMessageFilterEx(h, WM_COPYDATA, MSGFLT_ALLOW, None);
         Some(h)
     }
 }
 
-fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_request: OnRequest) -> Result<()> {
+fn run(cfg: Config, role: Role, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_request: OnRequest) -> Result<()> {
     crate::layer::register_class()?;
     let open_msg = unsafe { RegisterWindowMessageW(crate::admin::OPEN_MSG) };
-    let signal = signal_window(open_msg);
+    let signal = match role {
+        Role::Main => signal_window(open_msg),
+        Role::Helper { .. } => helper_window(),
+    };
     let frame_event = unsafe { CreateEventW(None, false, false, None)? };
     let mut m = Manager {
         gpu: Gpu::new()?,
@@ -783,7 +970,20 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_request:
         on_request,
         last_status: None,
         drawing: None,
+        role,
+        upper: false,
+        helper: None,
+        helper_status: None,
+        helper_starts: Vec::new(),
+        last_cfg: None,
+        window: signal,
     };
+    // As administrator, normal apps go to a helper without those rights.
+    // DEONYX_HELPER_TEST tries the same without them.
+    let wants_helper = crate::admin::elevated() || std::env::var_os("DEONYX_HELPER_TEST").is_some();
+    if role == Role::Main && wants_helper && std::env::var_os("DEONYX_NO_HELPER").is_none() {
+        m.start_helper();
+    }
     m.apply(cfg);
 
     unsafe {
@@ -799,10 +999,12 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_request:
         if std::env::var_os("DEONYX_CONFIG_DIR").is_some() {
             mods |= MOD_SHIFT;
         }
-        let all = RegisterHotKey(None, HOTKEY_ALL, mods, b'D' as u32).is_ok();
-        let front = RegisterHotKey(None, HOTKEY_FRONT, mods, b'F' as u32).is_ok();
-        if !all || !front {
-            eprintln!("bir kisayol baska bir program tarafindan kullaniliyor");
+        if role == Role::Main {
+            let all = RegisterHotKey(None, HOTKEY_ALL, mods, b'D' as u32).is_ok();
+            let front = RegisterHotKey(None, HOTKEY_FRONT, mods, b'F' as u32).is_ok();
+            if !all || !front {
+                eprintln!("bir kisayol baska bir program tarafindan kullaniliyor");
+            }
         }
 
         let mut msg = MSG::default();
@@ -837,6 +1039,10 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_request:
                     }
                 }
             }
+            let inbox: Vec<(usize, u32, Vec<u8>)> = INBOX.with(|i| std::mem::take(&mut *i.borrow_mut()));
+            for (kind, from, bytes) in &inbox {
+                m.receive(*kind, *from, bytes);
+            }
             let events: Vec<(u32, isize)> = EVENTS.with(|e| std::mem::take(&mut *e.borrow_mut()));
             for (ev, key) in &events {
                 m.handle(*ev, *key);
@@ -850,6 +1056,7 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_request:
             }
             if last_rescan.elapsed().as_secs() >= 1 {
                 m.rescan();
+                m.watch_helper();
                 last_rescan = Instant::now();
             }
             if last_schedule.elapsed().as_secs() >= 5 {
@@ -865,6 +1072,8 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_request:
         }
         m.stop_inspect();
         m.layers.clear();
+        // Ends the helper too.
+        m.helper = None;
         if let Some(h) = signal {
             let _ = DestroyWindow(h);
         }

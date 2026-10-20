@@ -53,6 +53,7 @@ pub fn is_elevated(pid: u32) -> bool {
     }
 }
 
+pub const LEVEL_MEDIUM: u32 = 0x2000;
 pub const LEVEL_SYSTEM: u32 = 0x4000;
 
 /// Windows integrity level of a process: 0x2000 normal, 0x3000 administrator,
@@ -153,10 +154,24 @@ pub fn top_level_windows() -> Vec<HWND> {
     v
 }
 
-/// Windows' own language is Turkish.
-pub fn system_is_turkish() -> bool {
+/// The language Windows shows itself in, if Deonyx speaks it, else English.
+pub fn system_language() -> &'static str {
     let id = unsafe { windows::Win32::Globalization::GetUserDefaultUILanguage() };
-    id & 0x3ff == 0x1f
+    match id & 0x3ff {
+        0x1f => "tr",
+        0x07 => "de",
+        0x0c => "fr",
+        0x0a => "es",
+        0x10 => "it",
+        0x16 => "pt",
+        0x19 => "ru",
+        0x22 => "uk",
+        0x13 => "nl",
+        0x11 => "ja",
+        0x12 => "ko",
+        0x04 => "zh",
+        _ => "en",
+    }
 }
 
 /// Windows is set to dark mode for apps.

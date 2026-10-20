@@ -15,6 +15,7 @@ mod apps;
 mod config;
 mod engine;
 mod gpu;
+mod helper;
 mod layer;
 mod protect;
 mod select;
@@ -32,7 +33,7 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_updater::UpdaterExt;
 
 use config::{AppRule, Config, Excluded};
-use engine::{Cmd, Engine, Request, Status};
+use engine::{Cmd, Engine, Request, Role, Status};
 
 struct Tray {
     toggle: CheckMenuItem<Wry>,
@@ -57,14 +58,27 @@ struct Snapshot {
     elevated: bool,
     update: Option<String>,
     lang: &'static str,
+    /// What "Same as Windows" means here.
+    system_lang: &'static str,
 }
 
-/// Tray texts, in the settings' language.
+/// Tray texts, in the settings' language: the switch, Settings, Quit, and
+/// the tooltip when on and off.
 fn words(lang: &str) -> [&'static str; 5] {
-    if lang == "tr" {
-        ["Uygulamaları karart", "Ayarlar", "Deonyx'ten çık", "Deonyx: açık", "Deonyx: kapalı"]
-    } else {
-        ["Darken apps", "Settings", "Quit Deonyx", "Deonyx: on", "Deonyx: off"]
+    match lang {
+        "tr" => ["Uygulamaları karart", "Ayarlar", "Deonyx'ten çık", "Deonyx: açık", "Deonyx: kapalı"],
+        "de" => ["Apps abdunkeln", "Einstellungen", "Deonyx beenden", "Deonyx: an", "Deonyx: aus"],
+        "fr" => ["Assombrir les applis", "Paramètres", "Quitter Deonyx", "Deonyx : activé", "Deonyx : désactivé"],
+        "es" => ["Oscurecer apps", "Ajustes", "Salir de Deonyx", "Deonyx: activado", "Deonyx: desactivado"],
+        "it" => ["Scurisci le app", "Impostazioni", "Esci da Deonyx", "Deonyx: attivo", "Deonyx: disattivato"],
+        "pt" => ["Escurecer apps", "Configurações", "Sair do Deonyx", "Deonyx: ligado", "Deonyx: desligado"],
+        "ru" => ["Затемнять приложения", "Настройки", "Выйти из Deonyx", "Deonyx: вкл.", "Deonyx: выкл."],
+        "uk" => ["Затемнювати застосунки", "Налаштування", "Вийти з Deonyx", "Deonyx: увімк.", "Deonyx: вимк."],
+        "nl" => ["Apps donker maken", "Instellingen", "Deonyx afsluiten", "Deonyx: aan", "Deonyx: uit"],
+        "ja" => ["アプリを暗くする", "設定", "Deonyx を終了", "Deonyx: オン", "Deonyx: オフ"],
+        "ko" => ["앱 어둡게 하기", "설정", "Deonyx 종료", "Deonyx: 켜짐", "Deonyx: 꺼짐"],
+        "zh" => ["调暗应用", "设置", "退出 Deonyx", "Deonyx：开", "Deonyx：关"],
+        _ => ["Darken apps", "Settings", "Quit Deonyx", "Deonyx: on", "Deonyx: off"],
     }
 }
 
@@ -78,6 +92,7 @@ fn get_state(s: tauri::State<State>) -> Snapshot {
         version: env!("CARGO_PKG_VERSION"),
         elevated: admin::elevated(),
         update: s.update.lock().unwrap().clone(),
+        system_lang: win::system_language(),
     }
 }
 
@@ -390,7 +405,12 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
 
-    // Helper run, as administrator, by admin::run_elevated.
+    // The copy that darkens normal apps for a Deonyx running as administrator.
+    if has("--helper") {
+        helper_main(&args);
+        return;
+    }
+    // Run, as administrator, by admin::run_elevated.
     if let Some(i) = args.iter().position(|a| a == "--admin-task") {
         let r = match args.get(i + 1).map(String::as_str) {
             Some("create-logon") => admin::create_task(true),
@@ -446,6 +466,7 @@ fn main() {
             let first_run = cfg.apps.is_empty() && !cfg.everything;
             let engine = Engine::start(
                 cfg.clone(),
+                Role::Main,
                 Box::new(move |st| on_status(&status_handle, st)),
                 Box::new(move |r| on_request(&request_handle, r)),
             );
@@ -504,6 +525,36 @@ fn main() {
                 api.prevent_exit();
             }
         });
+}
+
+/// The helper (see helper.rs): no tray and no window, just the engine, for
+/// as long as the main Deonyx runs.
+fn helper_main(args: &[String]) {
+    // Tauri makes the main copy see real pixels on every screen; the helper
+    // never starts Tauri, so it asks for that itself.
+    unsafe {
+        use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+    let arg = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
+    if let Some(dir) = arg("--config-dir") {
+        std::env::set_var("DEONYX_CONFIG_DIR", dir);
+    }
+    let parent: u32 = arg("--parent").and_then(|s| s.parse().ok()).unwrap_or(0);
+    // A window handle can't cross threads as one; its number can.
+    let main_window: isize = arg("--window").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let hwnd = |n: isize| windows::Win32::Foundation::HWND(n as *mut _);
+    let engine = Engine::start(
+        config::load(),
+        Role::Helper { parent },
+        Box::new(move |st| {
+            helper::send(hwnd(main_window), Some(hwnd(st.hwnd)), helper::STATUS, &st);
+        }),
+        Box::new(|_| {}),
+    );
+    helper::wait_for_parent(parent, hwnd(main_window));
+    engine.send(Cmd::Quit);
+    std::thread::sleep(std::time::Duration::from_millis(300));
 }
 
 /// Waits without holding a thread.
