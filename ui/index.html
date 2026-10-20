@@ -8,62 +8,181 @@
 </head>
 <body>
   <main id="app">
+    <div id="update-bar" class="banner" hidden>
+      <span id="update-text"></span>
+      <button class="primary" id="update-now" data-i18n="update.install">Update now</button>
+    </div>
+
     <header class="top">
       <img class="logo" src="logo.svg" alt="">
       <div class="brand">
         <h1>Deonyx</h1>
-        <p>Dark mode for any app</p>
+        <p data-i18n="tagline">Dark mode for any app</p>
       </div>
       <label class="master">
         <span class="master-text">
           <strong id="master-label">On</strong>
-          <kbd>Ctrl+Alt+D</kbd>
+          <small id="master-sub"></small>
         </span>
         <input type="checkbox" class="switch big" id="master">
       </label>
     </header>
 
     <section>
+      <h2 data-i18n="mode.title">What to darken</h2>
+      <div class="seg" id="mode">
+        <button data-mode="list" data-i18n="mode.list">Only the apps I choose</button>
+        <button data-mode="everything" data-i18n="mode.everything">Every light window</button>
+      </div>
+      <p class="hint under" id="mode-hint"></p>
+    </section>
+
+    <section>
       <div class="section-head">
         <div>
-          <h2>Apps</h2>
-          <p class="hint">Deonyx darkens these programs whenever they're open.</p>
+          <h2 id="apps-title">Apps</h2>
+          <p class="hint" id="apps-hint"></p>
         </div>
-        <button class="primary" id="add">Add an app</button>
+        <button class="primary" id="add" data-i18n="apps.add">Add an app</button>
       </div>
       <div id="picker" class="picker" hidden></div>
       <div id="apps" class="apps"></div>
     </section>
 
+    <section id="exclude-section" hidden>
+      <div class="section-head">
+        <div>
+          <h2 data-i18n="exclude.title">Left alone</h2>
+          <p class="hint" data-i18n="exclude.hint">Deonyx never touches these programs.</p>
+        </div>
+        <button id="add-exclude" data-i18n="exclude.add">Add a program</button>
+      </div>
+      <div id="exclude-picker" class="picker" hidden></div>
+      <div id="exclude" class="apps"></div>
+    </section>
+
     <section>
-      <h2>General</h2>
+      <h2 data-i18n="look.title">Look</h2>
       <div class="rows">
-        <label class="row">
-          <span>
-            <strong>Start with Windows</strong>
-            <small>Deonyx waits quietly in the tray.</small>
-          </span>
-          <input type="checkbox" class="switch" id="autostart">
-        </label>
-        <label class="row">
-          <span>
-            <strong>Run as administrator</strong>
-            <small id="admin-note">Lets Deonyx darken apps that run as administrator, like Task Manager. Windows asks for permission once.</small>
-          </span>
-          <input type="checkbox" class="switch" id="admin">
-        </label>
         <div class="row">
           <span>
-            <strong>Turn darkening on and off</strong>
-            <small>Works anywhere, even when this window is closed.</small>
+            <strong data-i18n="look.style">Style</strong>
+            <small data-i18n="look.style.hint"></small>
+          </span>
+          <div class="seg small" id="style">
+            <button data-style="gray" data-i18n="look.gray">Gray</button>
+            <button data-style="black" data-i18n="look.black">Black</button>
+            <button data-style="soft" data-i18n="look.soft">Soft</button>
+          </div>
+        </div>
+        <div class="row">
+          <span>
+            <strong data-i18n="look.warm">Warm tint</strong>
+            <small data-i18n="look.warm.hint"></small>
+          </span>
+          <span class="inline-slider">
+            <input type="range" id="warm" min="0" max="100" step="1">
+            <span id="warm-val"></span>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2 data-i18n="when.title">When</h2>
+      <div class="rows">
+        <div class="row">
+          <span>
+            <strong data-i18n="when.label">Darken</strong>
+            <small id="when-hint"></small>
+          </span>
+          <select id="schedule">
+            <option value="always" data-i18n="when.always">Always</option>
+            <option value="windows" data-i18n="when.windows">When Windows is in dark mode</option>
+            <option value="times" data-i18n="when.times">Between set hours</option>
+          </select>
+        </div>
+        <div class="row" id="times-row" hidden>
+          <span class="times">
+            <small data-i18n="when.from">from</small>
+            <input type="time" id="from">
+            <small data-i18n="when.to">to</small>
+            <input type="time" id="to">
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2 data-i18n="tools.title">Tools</h2>
+      <div class="rows">
+        <div class="row">
+          <span>
+            <strong data-i18n="tools.inspect">Why isn't a window dark?</strong>
+            <small id="inspect-hint" data-i18n="tools.inspect.hint"></small>
+          </span>
+          <button id="inspect" data-i18n="tools.check">Check a window</button>
+        </div>
+        <div id="inspect-result" class="result" hidden></div>
+        <div class="row">
+          <span>
+            <strong data-i18n="tools.front">Switch the app in front</strong>
+            <small data-i18n="tools.front.hint"></small>
+          </span>
+          <kbd>Ctrl+Alt+F</kbd>
+        </div>
+        <div class="row">
+          <span>
+            <strong data-i18n="tools.all">Turn darkening on and off</strong>
+            <small data-i18n="tools.all.hint"></small>
           </span>
           <kbd>Ctrl+Alt+D</kbd>
         </div>
       </div>
     </section>
 
+    <section>
+      <h2 data-i18n="general.title">General</h2>
+      <div class="rows">
+        <label class="row">
+          <span>
+            <strong data-i18n="general.autostart">Start with Windows</strong>
+            <small data-i18n="general.autostart.hint"></small>
+          </span>
+          <input type="checkbox" class="switch" id="autostart">
+        </label>
+        <label class="row">
+          <span>
+            <strong data-i18n="general.admin">Run as administrator</strong>
+            <small id="admin-note" data-i18n="general.admin.hint"></small>
+          </span>
+          <input type="checkbox" class="switch" id="admin">
+        </label>
+        <div class="row">
+          <span><strong data-i18n="general.language">Language</strong></span>
+          <select id="language">
+            <option value="auto" data-i18n="general.language.auto">Same as Windows</option>
+            <option value="en">English</option>
+            <option value="tr">Türkçe</option>
+          </select>
+        </div>
+        <div class="row">
+          <span>
+            <strong data-i18n="general.updates">Updates</strong>
+            <small id="update-status" data-i18n="general.updates.hint"></small>
+          </span>
+          <span class="actions">
+            <button class="quiet" id="check-update" data-i18n="general.updates.check">Check now</button>
+            <input type="checkbox" class="switch" id="updates">
+          </span>
+        </div>
+      </div>
+    </section>
+
     <footer id="footer"></footer>
   </main>
+  <div id="toast" hidden></div>
+  <script src="i18n.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -21,6 +21,17 @@ Plenty of Windows apps still have no dark mode. SketchUp is one of them, and its
 - **Leaves dark things alone.** A window that is already dark is shown as it is.
 - **Never touches the app.** Deonyx captures the window with Windows.Graphics.Capture and draws the result in a click-through layer on top of it. Nothing is injected into the app, and nothing leaves your PC.
 
+## What you can do
+
+- **Your apps, or every light window.** Pick the apps to darken, or let Deonyx darken every light window and keep a list of programs it leaves alone.
+- **Pick a look.** Gray is easy on the eyes, Black suits OLED screens, Soft lowers the contrast. A warm tint makes evenings easier.
+- **Choose when.** Always, whenever Windows is in dark mode, or between the hours you set.
+- **Keep real colors where you want them.** Draw a box over a video, a canvas or a 3D view and it stays as it is, even when the window is resized.
+- **Ask why.** Click any window and Deonyx tells you why it is or isn't dark, with a button that fixes it when it can.
+- **Hotkeys.** Ctrl+Alt+F darkens or restores the app in front of you, Ctrl+Alt+D turns darkening on and off.
+- **Run as administrator** to darken apps like Task Manager, and **start with Windows** so it's always there.
+- In English and Turkish, and it keeps itself up to date.
+
 ## Build
 
 Needs Windows 11 (Windows 10 version 2004 or later should work but is untested) and [Rust](https://rustup.rs).
@@ -30,7 +41,7 @@ cargo build --release
 target\release\deonyx.exe
 ```
 
-Deonyx lives in the tray. Click its icon, choose **Add an app**, and pick a program from the list of open ones (or browse for it). Each app has its own background darkness and text brightness, and Ctrl+Alt+D turns darkening on and off from anywhere. Settings are kept in `%APPDATA%\Deonyx\config.json`.
+Deonyx lives in the tray. Click its icon, choose **Add an app**, and pick a program from the open or installed ones (or browse for it). Each app has its own background darkness and text brightness. Settings are kept in `%APPDATA%\Deonyx\config.json`.
 
 ## License
 

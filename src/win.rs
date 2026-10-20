@@ -152,3 +152,55 @@ pub fn top_level_windows() -> Vec<HWND> {
     }
     v
 }
+
+/// Windows' own language is Turkish.
+pub fn system_is_turkish() -> bool {
+    let id = unsafe { windows::Win32::Globalization::GetUserDefaultUILanguage() };
+    id & 0x3ff == 0x1f
+}
+
+/// Windows is set to dark mode for apps.
+pub fn apps_use_dark_theme() -> bool {
+    use windows::core::w;
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+    let mut v = 1u32;
+    let mut len = 4u32;
+    let r = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"),
+            w!("AppsUseLightTheme"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut v as *mut u32 as *mut c_void),
+            Some(&mut len),
+        )
+    };
+    r == ERROR_SUCCESS && v == 0
+}
+
+/// Minutes since local midnight.
+pub fn local_minutes() -> u32 {
+    let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    t.wHour as u32 * 60 + t.wMinute as u32
+}
+
+/// A window without a title bar that covers its whole screen: a game or a
+/// video played full screen.
+pub fn is_fullscreen(h: HWND) -> bool {
+    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+    unsafe {
+        let style = GetWindowLongW(h, GWL_STYLE) as u32;
+        if style & WS_CAPTION.0 == WS_CAPTION.0 {
+            return false;
+        }
+        let mon = MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST);
+        let mut mi = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if !GetMonitorInfoW(mon, &mut mi).as_bool() {
+            return false;
+        }
+        let mut r = RECT::default();
+        let _ = GetWindowRect(h, &mut r);
+        r.left <= mi.rcMonitor.left && r.top <= mi.rcMonitor.top && r.right >= mi.rcMonitor.right && r.bottom >= mi.rcMonitor.bottom
+    }
+}

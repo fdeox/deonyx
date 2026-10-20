@@ -11,6 +11,7 @@ use windows::Graphics::SizeInt32;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Direct3D::D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 use windows::Win32::Graphics::Direct3D11::*;
+use windows::Win32::Graphics::DirectComposition::{IDCompositionTarget, IDCompositionVisual};
 use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Dxgi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -48,6 +49,7 @@ pub fn register_class() -> Result<()> {
 pub struct Look {
     pub lmin: f32,
     pub lmax: f32,
+    pub warm: f32,
     pub split: bool,
     pub owner: bool,
 }
@@ -68,6 +70,8 @@ pub struct Layer {
     pool: Direct3D11CaptureFramePool,
     session: GraphicsCaptureSession,
     swap: IDXGISwapChain1,
+    /// Kept alive while the layer lives (see-through layers only).
+    _comp: Option<(IDCompositionTarget, IDCompositionVisual)>,
     rtv: Option<ID3D11RenderTargetView>,
     copy: Option<(ID3D11Texture2D, ID3D11ShaderResourceView)>,
     probe: Option<Probe>,
@@ -75,8 +79,10 @@ pub struct Layer {
     measured: bool,
     size: (u32, u32),
     pub params: Params,
-    /// Protected areas relative to the window frame.
+    /// Protected areas relative to the window frame (found by UI Automation).
     pub protect: Vec<RECT>,
+    /// Areas the user drew, as distances from the window's edges.
+    pub manual: Vec<crate::config::Area>,
     last_rect: RECT,
     shown: bool,
     pub born: Instant,
@@ -105,8 +111,13 @@ impl Layer {
 
             let r = frame_rect(target);
             let hinst = GetModuleHandleW(None)?;
+            let see_through = gpu.dcomp.is_some();
+            let mut ex = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+            if see_through {
+                ex |= WS_EX_NOREDIRECTIONBITMAP;
+            }
             let overlay = CreateWindowExW(
-                WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                ex,
                 w!("DeonyxOverlay"),
                 w!("Deonyx"),
                 WS_POPUP,
@@ -137,12 +148,26 @@ impl Layer {
                 BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
                 BufferCount: 2,
                 Scaling: DXGI_SCALING_STRETCH,
-                SwapEffect: DXGI_SWAP_EFFECT_FLIP_DISCARD,
-                AlphaMode: DXGI_ALPHA_MODE_IGNORE,
+                SwapEffect: if see_through { DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL } else { DXGI_SWAP_EFFECT_FLIP_DISCARD },
+                AlphaMode: if see_through { DXGI_ALPHA_MODE_PREMULTIPLIED } else { DXGI_ALPHA_MODE_IGNORE },
                 ..Default::default()
             };
-            let swap = gpu.factory.CreateSwapChainForHwnd(&gpu.device, overlay, &desc, None, None)?;
-            let _ = gpu.factory.MakeWindowAssociation(overlay, DXGI_MWA_NO_ALT_ENTER);
+            let (swap, comp) = match &gpu.dcomp {
+                Some(dc) => {
+                    let swap = gpu.factory.CreateSwapChainForComposition(&gpu.device, &desc, None)?;
+                    let target = dc.CreateTargetForHwnd(overlay, true)?;
+                    let visual = dc.CreateVisual()?;
+                    visual.SetContent(&swap)?;
+                    target.SetRoot(&visual)?;
+                    dc.Commit()?;
+                    (swap, Some((target, visual)))
+                }
+                None => {
+                    let swap = gpu.factory.CreateSwapChainForHwnd(&gpu.device, overlay, &desc, None, None)?;
+                    let _ = gpu.factory.MakeWindowAssociation(overlay, DXGI_MWA_NO_ALT_ENTER);
+                    (swap, None)
+                }
+            };
 
             let mut layer = Layer {
                 target,
@@ -151,6 +176,7 @@ impl Layer {
                 pool,
                 session,
                 swap,
+                _comp: comp,
                 rtv: None,
                 copy: None,
                 probe: None,
@@ -160,12 +186,15 @@ impl Layer {
                 params: Params {
                     lmin: look.lmin,
                     lmax: look.lmax,
+                    warm: look.warm,
                     sat: 0.95,
                     amount: 1.0,
                     fringe: if std::env::var_os("DEONYX_NO_FRINGE").is_some() { 0.0 } else { 1.0 },
+                    holes: if see_through { 1.0 } else { 0.0 },
                     ..Default::default()
                 },
                 protect: Vec::new(),
+                manual: Vec::new(),
                 last_rect: RECT::default(),
                 shown: false,
                 born: Instant::now(),
@@ -337,9 +366,12 @@ impl Layer {
     }
 
     fn render(&mut self, gpu: &Gpu) -> Result<()> {
-        let n = self.protect.len().min(MAX_RECTS);
+        let (w, h) = (self.size.0 as i32, self.size.1 as i32);
+        let drawn = self.manual.iter().map(|a| RECT { left: a.left, top: a.top, right: w - a.right, bottom: h - a.bottom });
+        let all: Vec<RECT> = self.protect.iter().copied().chain(drawn).filter(|r| r.right > r.left && r.bottom > r.top).collect();
+        let n = all.len().min(MAX_RECTS);
         self.params.count = n as u32;
-        for (i, r) in self.protect.iter().take(n).enumerate() {
+        for (i, r) in all.iter().take(n).enumerate() {
             self.params.rects[i] = [r.left as f32, r.top as f32, r.right as f32, r.bottom as f32];
         }
         let mut p = self.params;
@@ -416,6 +448,11 @@ impl Layer {
             }
             self.measured = true;
         }
+    }
+
+    /// The window was found to be dark already and is shown as it is.
+    pub fn left_as_is(&self) -> bool {
+        self.measured && self.params.amount <= 0.0
     }
 
     /// Redraws the last frame, e.g. after the protected areas changed.

@@ -1,5 +1,9 @@
 ; Extra steps for the NSIS installer Tauri builds.
 
+; Our own template (installer.nsi) includes pages.nsh from here too.
+!define DEONYX_DIR "${__FILEDIR__}"
+!include "${DEONYX_DIR}\theme.nsh"
+
 !macro NSIS_HOOK_PREUNINSTALL
   ; Close Deonyx first, so its dark layers go away with it.
   nsExec::Exec 'taskkill /F /IM deonyx.exe'

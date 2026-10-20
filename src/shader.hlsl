@@ -12,7 +12,9 @@ cbuffer Params : register(b0)
     float split;       // > 0: pixels left of this x stay original (comparison view)
     float amount;      // 1 = darken, 0 = window is dark already, show it as it is
     float fringe;      // 1 = keep saturation, which calms ClearType colour fringes
-    float pad;
+    float holes;       // 1 = the layer can be see-through: kept areas show the real window
+    float warm;        // 0..1 warm tint, like Night light
+    float3 pad;
 };
 
 float4 vs(uint id : SV_VertexID) : SV_Position
@@ -66,16 +68,33 @@ float3 lab_at(int2 p, int2 size)
     return to_oklab(to_lin(src.Load(int3(p, 0)).rgb));
 }
 
+// Kept as it is: a hole in the layer when it can be see-through (the real,
+// live window shows), else the captured pixel.
+float4 keep(float4 c)
+{
+    return holes > 0.0 ? float4(0, 0, 0, 0) : float4(c.rgb, 1);
+}
+
 float4 ps(float4 pos : SV_Position) : SV_Target
 {
     float4 c = src.Load(int3(pos.xy, 0));
     if (pos.x < split || amount <= 0.0)
-        return float4(c.rgb, 1);
+        return keep(c);
     for (uint k = 0; k < count; k++)
     {
         float4 r = rects[k];
         if (pos.x >= r.x && pos.y >= r.y && pos.x < r.z && pos.y < r.w)
-            return float4(c.rgb, 1);
+            return keep(c);
+    }
+    if (holes > 0.0)
+    {
+        // Protected video (DRM) reaches the capture as solid black. Flipped,
+        // it would cover the film with grey; leave a hole so it plays. Real
+        // black there looks the same either way, and text never fills a
+        // whole 8x8 block with pure black.
+        float3 block = src.Load(int3(int2(pos.xy) >> 3, 3)).rgb;
+        if (max(c.r, max(c.g, c.b)) < 0.002 && max(block.r, max(block.g, block.b)) < 0.002)
+            return float4(0, 0, 0, 0);
     }
     // Flip lightness only: white turns dark grey, black turns soft white,
     // and a red stays red.
@@ -116,5 +135,7 @@ float4 ps(float4 pos : SV_Position) : SV_Target
     // turn into a loud red outline once it is dark.
     float keep = fringe > 0.0 ? pow(saturate(lab.x / max(before, 0.001)), 0.8) : 1.0;
     lab.yz *= sat * keep;
-    return float4(to_srgb(saturate(from_oklab(lab))), 1);
+    float3 rgb = to_srgb(saturate(from_oklab(lab)));
+    rgb *= lerp(float3(1, 1, 1), float3(1.0, 0.86, 0.68), warm);
+    return float4(rgb, 1);
 }

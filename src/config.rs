@@ -4,6 +4,17 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+/// An area of a window kept in its real colours, drawn by the user. Stored
+/// as distances from the window's edges, so it follows the window when it is
+/// resized the way side panels and 3D views do.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Area {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppRule {
@@ -18,6 +29,8 @@ pub struct AppRule {
     pub text: f32,
     /// Keep 3D views and pictures in their real colours.
     pub protect: bool,
+    /// Areas the user drew to keep in real colours.
+    pub areas: Vec<Area>,
     /// The program's icon as a small PNG data URL, for the settings window.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon: Option<String>,
@@ -32,25 +45,40 @@ impl Default for AppRule {
             darkness: 0.6,
             text: 0.7,
             protect: true,
+            areas: Vec::new(),
             icon: None,
         }
     }
 }
 
 impl AppRule {
-    /// OKLab lightness a white background is mapped to.
-    pub fn lmin(&self) -> f32 {
-        0.40 - 0.28 * self.darkness.clamp(0.0, 1.0)
-    }
-
-    /// OKLab lightness black text is mapped to.
-    pub fn lmax(&self) -> f32 {
-        0.74 + 0.22 * self.text.clamp(0.0, 1.0)
-    }
-
     pub fn key(&self) -> String {
         self.exe.to_ascii_lowercase()
     }
+
+    /// OKLab lightness that white and black become, for a look.
+    pub fn lightness(&self, style: &str) -> (f32, f32) {
+        let d = self.darkness.clamp(0.0, 1.0);
+        let t = self.text.clamp(0.0, 1.0);
+        match style {
+            // Backgrounds go (nearly) pitch black: OLED screens switch those
+            // pixels off.
+            "black" => (0.10 * (1.0 - d), 0.74 + 0.22 * t),
+            // Lower contrast: grey on grey, easy on tired eyes.
+            "soft" => (0.46 - 0.20 * d, 0.70 + 0.16 * t),
+            _ => (0.40 - 0.28 * d, 0.74 + 0.22 * t),
+        }
+    }
+}
+
+/// A program left alone in "every light window" mode.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Excluded {
+    pub exe: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -58,15 +86,62 @@ impl AppRule {
 pub struct Config {
     pub enabled: bool,
     pub apps: Vec<AppRule>,
+    /// Darken every light window, not only the apps in the list.
+    pub everything: bool,
+    pub exclude: Vec<Excluded>,
+    /// "gray", "black" or "soft".
+    pub style: String,
+    /// 0..1 warm tint, like Night light.
+    pub warm: f32,
+    /// "always", "windows" (when Windows uses dark mode) or "times".
+    pub schedule: String,
+    /// "HH:MM", for schedule "times". May wrap past midnight.
+    pub from: String,
+    pub to: String,
     /// Start with Windows.
     pub autostart: bool,
     /// Run as administrator, through a scheduled task (admin.rs).
     pub admin: bool,
+    /// "auto", "en" or "tr".
+    pub language: String,
+    /// Look for a new version now and then.
+    pub updates: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { enabled: true, apps: Vec::new(), autostart: false, admin: false }
+        Config {
+            enabled: true,
+            apps: Vec::new(),
+            everything: false,
+            exclude: Vec::new(),
+            style: "gray".into(),
+            warm: 0.0,
+            schedule: "always".into(),
+            from: "20:00".into(),
+            to: "07:00".into(),
+            autostart: false,
+            admin: false,
+            language: "auto".into(),
+            updates: true,
+        }
+    }
+}
+
+impl Config {
+    /// Language actually used: "tr" or "en".
+    pub fn lang(&self) -> &'static str {
+        match self.language.as_str() {
+            "tr" => "tr",
+            "en" => "en",
+            _ => {
+                if crate::win::system_is_turkish() {
+                    "tr"
+                } else {
+                    "en"
+                }
+            }
+        }
     }
 }
 

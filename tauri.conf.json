@@ -30,7 +30,29 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "installerHooks": "installer/hooks.nsh"
+        "template": "installer/installer.nsi",
+        "installerHooks": "installer/hooks.nsh",
+        "installerIcon": "icons/icon.ico",
+        "sidebarImage": "installer/sidebar.bmp",
+        "headerImage": "installer/header.bmp",
+        "uninstallerHeaderImage": "installer/header.bmp",
+        "languages": [
+          "English",
+          "Turkish"
+        ],
+        "displayLanguageSelector": false
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYzNzU5NTYwNEEyMjkzMjMKUldRamt5SktZSlYxWXhpbU9KMVZkc0pwUHRCUUVjR1FtWklLWFQ0TWNzZFdaRUQ1RlVibHkybnYK",
+      "endpoints": [
+        "https://github.com/fdeox/deonyx/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

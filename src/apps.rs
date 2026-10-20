@@ -41,7 +41,7 @@ const SKIP: &[&str] = &[
     "deonyx.exe",
 ];
 
-fn exe_path(pid: u32) -> Option<String> {
+pub fn exe_path(pid: u32) -> Option<String> {
     unsafe {
         let p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let mut buf = [0u16; 1024];

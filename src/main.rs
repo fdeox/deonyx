@@ -17,6 +17,7 @@ mod engine;
 mod gpu;
 mod layer;
 mod protect;
+mod select;
 mod win;
 
 use std::sync::Mutex;
@@ -28,15 +29,24 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{AppHandle, Emitter, Manager, RunEvent, Theme, WebviewUrl, WebviewWindowBuilder, Wry};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_updater::UpdaterExt;
 
-use config::{AppRule, Config};
-use engine::{Cmd, Engine, Status};
+use config::{AppRule, Config, Excluded};
+use engine::{Cmd, Engine, Request, Status};
+
+struct Tray {
+    toggle: CheckMenuItem<Wry>,
+    settings: MenuItem<Wry>,
+    quit: MenuItem<Wry>,
+}
 
 struct State {
     cfg: Mutex<Config>,
     status: Mutex<Status>,
     engine: Engine,
-    toggle: Mutex<Option<CheckMenuItem<Wry>>>,
+    tray: Mutex<Option<Tray>>,
+    /// A newer version, once found.
+    update: Mutex<Option<String>>,
 }
 
 #[derive(Serialize)]
@@ -45,15 +55,29 @@ struct Snapshot {
     status: Status,
     version: &'static str,
     elevated: bool,
+    update: Option<String>,
+    lang: &'static str,
+}
+
+/// Tray texts, in the settings' language.
+fn words(lang: &str) -> [&'static str; 5] {
+    if lang == "tr" {
+        ["Uygulamaları karart", "Ayarlar", "Deonyx'ten çık", "Deonyx: açık", "Deonyx: kapalı"]
+    } else {
+        ["Darken apps", "Settings", "Quit Deonyx", "Deonyx: on", "Deonyx: off"]
+    }
 }
 
 #[tauri::command]
 fn get_state(s: tauri::State<State>) -> Snapshot {
+    let config = s.cfg.lock().unwrap().clone();
     Snapshot {
-        config: s.cfg.lock().unwrap().clone(),
+        lang: config.lang(),
+        config,
         status: s.status.lock().unwrap().clone(),
         version: env!("CARGO_PKG_VERSION"),
         elevated: admin::elevated(),
+        update: s.update.lock().unwrap().clone(),
     }
 }
 
@@ -78,8 +102,13 @@ fn app_icons(paths: Vec<String>) -> Vec<Option<String>> {
 }
 
 #[tauri::command(async)]
+fn describe_app(path: String) -> apps::Running {
+    apps::describe(&path)
+}
+
+#[tauri::command(async)]
 fn pick_exe(app: AppHandle) -> Option<apps::Running> {
-    let picked = app.dialog().file().set_title("Choose a program").add_filter("Programs", &["exe"]).blocking_pick_file()?;
+    let picked = app.dialog().file().add_filter("Programs", &["exe"]).blocking_pick_file()?;
     let path = picked.into_path().ok()?;
     Some(apps::describe(&path.to_string_lossy()))
 }
@@ -128,14 +157,51 @@ fn set_admin(app: AppHandle, on: bool) -> Result<(), String> {
         } else {
             admin::relaunch_normal();
         }
-        let a = app.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(400));
-            a.state::<State>().engine.send(Cmd::Quit);
-            a.exit(0);
-        });
+        quit_soon(&app);
     }
     Ok(())
+}
+
+/// "Why isn't this window dark?": the engine waits for a click.
+#[tauri::command]
+fn inspect(app: AppHandle, on: bool) {
+    let s = app.state::<State>();
+    s.engine.send(if on { Cmd::Inspect } else { Cmd::StopInspect });
+}
+
+/// Let the user draw an area of an app's window to keep in real colours.
+#[tauri::command]
+fn draw_area(app: AppHandle, exe: String, hint: String) {
+    app.state::<State>().engine.send(Cmd::DrawArea { exe, hint });
+}
+
+#[tauri::command]
+async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
+    let found = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+    let version = found.map(|u| u.version);
+    *app.state::<State>().update.lock().unwrap() = version.clone();
+    Ok(version)
+}
+
+/// Downloads the new version and starts its installer, which replaces and
+/// restarts Deonyx.
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    let Some(update) = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())? else {
+        return Err("no update".into());
+    };
+    app.state::<State>().engine.send(Cmd::Quit);
+    update.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+    app.restart();
+}
+
+fn quit_soon(app: &AppHandle) {
+    let a = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        a.state::<State>().engine.send(Cmd::Quit);
+        a.exit(0);
+    });
 }
 
 /// Starting with Windows goes through the Run key normally, and through the
@@ -164,18 +230,78 @@ fn sync_startup(app: &AppHandle, c: &Config) -> Result<(), String> {
 fn apply(app: &AppHandle, config: Config) -> Result<(), String> {
     let s = app.state::<State>();
     config::save(&config).map_err(|e| e.to_string())?;
-    if let Some(t) = s.toggle.lock().unwrap().as_ref() {
-        let _ = t.set_checked(config.enabled);
+    if let Some(t) = s.tray.lock().unwrap().as_ref() {
+        let w = words(config.lang());
+        let _ = t.toggle.set_checked(config.enabled);
+        let _ = t.toggle.set_text(w[0]);
+        let _ = t.settings.set_text(w[1]);
+        let _ = t.quit.set_text(w[2]);
     }
     *s.cfg.lock().unwrap() = config.clone();
     s.engine.send(Cmd::Config(config));
     Ok(())
 }
 
+/// Like apply(), and tells the settings window, for changes made elsewhere.
+fn apply_and_tell(app: &AppHandle, config: Config) {
+    if apply(app, config.clone()).is_ok() {
+        let _ = app.emit("config", &config);
+    }
+}
+
 fn set_enabled(app: &AppHandle, on: bool) {
     let mut c = app.state::<State>().cfg.lock().unwrap().clone();
     c.enabled = on;
-    let _ = apply(app, c);
+    apply_and_tell(app, c);
+}
+
+/// Ctrl+Alt+F on an app: on if it was off, off if it was on.
+fn toggle_app(app: &AppHandle, exe: String, path: String) {
+    let mut c = app.state::<State>().cfg.lock().unwrap().clone();
+    let key = exe.to_ascii_lowercase();
+    if let Some(r) = c.apps.iter_mut().find(|r| r.key() == key) {
+        r.enabled = !r.enabled;
+    } else if c.everything {
+        if let Some(i) = c.exclude.iter().position(|e| e.exe.eq_ignore_ascii_case(&exe)) {
+            c.exclude.remove(i);
+        } else {
+            let d = apps::describe(&path);
+            c.exclude.push(Excluded { exe: d.exe, name: d.name, icon: d.icon });
+        }
+    } else {
+        let d = apps::describe(&path);
+        c.apps.push(AppRule { exe: d.exe, name: d.name, icon: d.icon, ..Default::default() });
+    }
+    apply_and_tell(app, c);
+}
+
+fn on_request(app: &AppHandle, r: Request) {
+    match r {
+        Request::OpenSettings => {
+            let a = app.clone();
+            let _ = app.run_on_main_thread(move || open_settings(&a));
+        }
+        Request::ToggleApp { exe, path } => toggle_app(app, exe, path),
+        Request::Inspected(report) => {
+            let _ = app.emit("inspected", &report);
+            let a = app.clone();
+            let _ = app.run_on_main_thread(move || open_settings(&a));
+        }
+        Request::Area { exe, area } => {
+            if let Ok(a) = &area {
+                let mut c = app.state::<State>().cfg.lock().unwrap().clone();
+                let key = exe.to_ascii_lowercase();
+                match c.apps.iter_mut().find(|r| r.key() == key) {
+                    Some(r) => r.areas.push(*a),
+                    None => c.apps.push(AppRule { exe: exe.clone(), name: exe.clone(), areas: vec![*a], ..Default::default() }),
+                }
+                apply_and_tell(app, c);
+            }
+            let _ = app.emit("area", serde_json::json!({ "exe": exe, "ok": area.is_ok(), "reason": area.err() }));
+            let a = app.clone();
+            let _ = app.run_on_main_thread(move || open_settings(&a));
+        }
+    }
 }
 
 /// Called on the engine thread whenever something worth showing changes.
@@ -187,48 +313,59 @@ fn on_status(app: &AppHandle, st: Status) {
         if c.enabled != st.enabled {
             c.enabled = st.enabled;
             let _ = config::save(&c);
-            if let Some(t) = s.toggle.lock().unwrap().as_ref() {
-                let _ = t.set_checked(st.enabled);
+            if let Some(t) = s.tray.lock().unwrap().as_ref() {
+                let _ = t.toggle.set_checked(st.enabled);
             }
         }
-    }
-    if let Some(tray) = app.tray_by_id("main") {
-        let _ = tray.set_tooltip(Some(if st.enabled { "Deonyx: on" } else { "Deonyx: off" }));
+        if let Some(tray) = app.tray_by_id("main") {
+            let w = words(c.lang());
+            let _ = tray.set_tooltip(Some(if st.enabled { w[3] } else { w[4] }));
+        }
     }
     let _ = app.emit("status", &st);
+}
+
+/// Test copies run with their own settings folder, next to the real Deonyx,
+/// and never take the focus from whatever the user is doing.
+fn testing() -> bool {
+    std::env::var_os("DEONYX_CONFIG_DIR").is_some()
 }
 
 fn open_settings(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
-        let _ = w.set_focus();
+        if !testing() {
+            let _ = w.set_focus();
+        }
         return;
     }
     // Likely next: "Add an app". Have the installed programs ready by then.
     apps::warm_up();
     let built = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("Deonyx")
-        .inner_size(820.0, 640.0)
-        .min_inner_size(640.0, 520.0)
+        .inner_size(840.0, 700.0)
+        .min_inner_size(660.0, 540.0)
         .theme(Some(Theme::Dark))
         .background_color(tauri::window::Color(18, 18, 22, 255))
         .center()
+        .focused(!testing())
         .build();
     if let Err(e) = built {
         eprintln!("ayarlar penceresi acilamadi: {e}");
     }
 }
 
-fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<CheckMenuItem<Wry>> {
-    let toggle = CheckMenuItem::with_id(app, "toggle", "Darken apps", true, enabled, Some("Ctrl+Alt+D"))?;
-    let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit Deonyx", true, None::<&str>)?;
+fn build_tray(app: &AppHandle, cfg: &Config) -> tauri::Result<Tray> {
+    let w = words(cfg.lang());
+    let toggle = CheckMenuItem::with_id(app, "toggle", w[0], true, cfg.enabled, Some("Ctrl+Alt+D"))?;
+    let settings = MenuItem::with_id(app, "settings", w[1], true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", w[2], true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&toggle, &PredefinedMenuItem::separator(app)?, &settings, &quit])?;
     let item = toggle.clone();
     TrayIconBuilder::with_id("main")
         .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
-        .tooltip(if enabled { "Deonyx: on" } else { "Deonyx: off" })
+        .tooltip(if cfg.enabled { w[3] } else { w[4] })
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(move |app, e| match e.id.as_ref() {
@@ -246,7 +383,7 @@ fn build_tray(app: &AppHandle, enabled: bool) -> tauri::Result<CheckMenuItem<Wry
             }
         })
         .build(app)?;
-    Ok(toggle)
+    Ok(Tray { toggle, settings, quit })
 }
 
 fn main() {
@@ -292,8 +429,8 @@ fn main() {
     }
 
     let mut builder = tauri::Builder::default();
-    // Tests run with their own settings folder, next to the real Deonyx.
-    if std::env::var_os("DEONYX_CONFIG_DIR").is_none() {
+    let testing = testing();
+    if !testing {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| open_settings(app)));
     }
     builder
@@ -302,23 +439,22 @@ fn main() {
             Some(vec!["--hidden"]),
         ))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
-            let handle = app.handle().clone();
-            let first_run = cfg.apps.is_empty();
-            let opener = app.handle().clone();
+            let status_handle = app.handle().clone();
+            let request_handle = app.handle().clone();
+            let first_run = cfg.apps.is_empty() && !cfg.everything;
             let engine = Engine::start(
                 cfg.clone(),
-                Box::new(move |st| on_status(&handle, st)),
-                Box::new(move || {
-                    let a = opener.clone();
-                    let _ = opener.run_on_main_thread(move || open_settings(&a));
-                }),
+                Box::new(move |st| on_status(&status_handle, st)),
+                Box::new(move |r| on_request(&request_handle, r)),
             );
             app.manage(State {
                 status: Mutex::new(Status { enabled: cfg.enabled, ..Default::default() }),
                 cfg: Mutex::new(cfg.clone()),
                 engine,
-                toggle: Mutex::new(None),
+                tray: Mutex::new(None),
+                update: Mutex::new(None),
             });
             // Starting with Windows used to live only in the Run key.
             if !cfg.admin && !cfg.autostart && app.autolaunch().is_enabled().unwrap_or(false) {
@@ -327,14 +463,39 @@ fn main() {
                 let _ = config::save(&c);
                 *app.state::<State>().cfg.lock().unwrap() = c;
             }
-            let toggle = build_tray(app.handle(), cfg.enabled)?;
-            *app.state::<State>().toggle.lock().unwrap() = Some(toggle);
+            let tray = build_tray(app.handle(), &cfg)?;
+            *app.state::<State>().tray.lock().unwrap() = Some(tray);
             if !hidden || first_run {
                 open_settings(app.handle());
             }
+            // Look for a new version a little after starting.
+            if cfg.updates && !testing {
+                let h = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio_sleep(10).await;
+                    if let Ok(Some(v)) = check_update(h.clone()).await {
+                        let _ = h.emit("update", &v);
+                    }
+                });
+            }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_state, set_config, running_apps, installed_apps, app_icons, pick_exe, get_autostart, set_autostart, set_admin])
+        .invoke_handler(tauri::generate_handler![
+            get_state,
+            set_config,
+            running_apps,
+            installed_apps,
+            app_icons,
+            describe_app,
+            pick_exe,
+            get_autostart,
+            set_autostart,
+            set_admin,
+            inspect,
+            draw_area,
+            check_update,
+            install_update
+        ])
         .build(tauri::generate_context!())
         .expect("Deonyx failed to start")
         .run(|_app, event| {
@@ -343,4 +504,15 @@ fn main() {
                 api.prevent_exit();
             }
         });
+}
+
+/// Waits without holding a thread.
+async fn tokio_sleep(secs: u64) {
+    let (tx, rx) = tauri::async_runtime::channel::<()>(1);
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(secs));
+        let _ = tx.blocking_send(());
+    });
+    let mut rx = rx;
+    let _ = rx.recv().await;
 }

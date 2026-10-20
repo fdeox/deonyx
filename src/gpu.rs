@@ -9,6 +9,7 @@ use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Graphics::Direct3D::Fxc::D3DCompile;
 use windows::Win32::Graphics::Direct3D::*;
 use windows::Win32::Graphics::Direct3D11::*;
+use windows::Win32::Graphics::DirectComposition::{DCompositionCreateDevice, IDCompositionDevice};
 use windows::Win32::Graphics::Dxgi::*;
 use windows::Win32::System::WinRT::Direct3D11::CreateDirect3D11DeviceFromDXGIDevice;
 
@@ -26,7 +27,9 @@ pub struct Params {
     pub split: f32,
     pub amount: f32,
     pub fringe: f32,
-    pub pad: f32,
+    pub holes: f32,
+    pub warm: f32,
+    pub pad: [f32; 3],
 }
 
 pub struct Gpu {
@@ -37,6 +40,9 @@ pub struct Gpu {
     pub vs: ID3D11VertexShader,
     pub ps: ID3D11PixelShader,
     pub cb: ID3D11Buffer,
+    /// See-through layers go through DirectComposition. None falls back to
+    /// opaque layers (DEONYX_OPAQUE=1, or if it isn't available).
+    pub dcomp: Option<IDCompositionDevice>,
 }
 
 fn compile(entry: &[u8], target: &[u8]) -> Result<ID3DBlob> {
@@ -90,6 +96,11 @@ impl Gpu {
             let dxgi: IDXGIDevice = device.cast()?;
             let rt_device: IDirect3DDevice = CreateDirect3D11DeviceFromDXGIDevice(&dxgi)?.cast()?;
             let factory: IDXGIFactory2 = CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0))?;
+            let dcomp = if std::env::var_os("DEONYX_OPAQUE").is_some() {
+                None
+            } else {
+                DCompositionCreateDevice::<_, IDCompositionDevice>(&dxgi).ok()
+            };
 
             let vsb = compile(b"vs\0", b"vs_5_0\0")?;
             let psb = compile(b"ps\0", b"ps_5_0\0")?;
@@ -113,6 +124,7 @@ impl Gpu {
                 vs: vs.unwrap(),
                 ps: ps.unwrap(),
                 cb: cb.unwrap(),
+                dcomp,
             })
         }
     }

@@ -1,5 +1,5 @@
 // The darkening engine. Runs on its own thread with its own message loop:
-// WinEvent hooks, the hotkey and capture frames all arrive there, so the
+// WinEvent hooks, the hotkeys and capture frames all arrive there, so the
 // settings window can never slow it down.
 
 use std::cell::RefCell;
@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::c_void;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use windows::core::{w, Result};
@@ -19,24 +19,85 @@ use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVE
 use windows::Win32::UI::Input::KeyboardAndMouse::{RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_NOREPEAT};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use crate::config::{AppRule, Config};
+use crate::config::{AppRule, Area, Config};
 use crate::gpu::Gpu;
 use crate::layer::{Layer, Look, OVERLAY_CLASS};
 use crate::protect::Finder;
+use crate::select;
 use crate::win::*;
 
 const OBJID_WINDOW: i32 = 0;
 const WM_ENGINE: u32 = WM_APP + 1;
-const HOTKEY_ID: i32 = 1;
+const HOTKEY_ALL: i32 = 1;
+const HOTKEY_FRONT: i32 = 2;
+
+/// Parts of Windows itself, never darkened in "every light window" mode.
+const SHELL_CLASSES: &[&str] = &[
+    "Progman",
+    "WorkerW",
+    "Shell_TrayWnd",
+    "Shell_SecondaryTrayWnd",
+    "NotifyIconOverflowWindow",
+    "TopLevelWindowForOverflowXamlIsland",
+    "Windows.UI.Core.CoreWindow",
+    "XamlExplorerHostIslandWindow",
+    "ForegroundStaging",
+    "MultitaskingViewFrame",
+    "TaskListThumbnailWnd",
+    "IME",
+    "MSCTFIME UI",
+];
+const SHELL_EXES: &[&str] = &[
+    "dwm.exe",
+    "shellexperiencehost.exe",
+    "startmenuexperiencehost.exe",
+    "searchhost.exe",
+    "searchapp.exe",
+    "textinputhost.exe",
+    "lockapp.exe",
+    "screenclippinghost.exe",
+    "gamebar.exe",
+    "gamebarftserver.exe",
+    "xboxgamebarwidgets.exe",
+];
 
 pub enum Cmd {
     Config(Config),
+    /// Wait for a click on a window, then explain what Deonyx does with it.
+    Inspect,
+    StopInspect,
+    /// Let the user draw an area of that app's window to keep in real colours.
+    DrawArea { exe: String, hint: String },
     Quit,
+}
+
+/// Things the engine asks the app to do.
+pub enum Request {
+    OpenSettings,
+    /// Ctrl+Alt+F: switch darkening of the app in front.
+    ToggleApp { exe: String, path: String },
+    Inspected(Report),
+    /// The outcome of DrawArea: the area, or why there is none.
+    Area { exe: String, area: std::result::Result<Area, String> },
+}
+
+/// What Deonyx does with a window, for "Why isn't this window dark?".
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Report {
+    pub exe: String,
+    pub path: String,
+    pub title: String,
+    /// darkened, already_dark, not_listed, excluded, app_off, off, waiting,
+    /// admin, service, no_capture, helper, fullscreen, shell, own, failed or
+    /// unknown.
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Status {
     pub enabled: bool,
+    /// On, but the schedule says not now.
+    pub waiting: bool,
     /// Lower-case exe name -> number of its main windows being darkened.
     pub running: HashMap<String, usize>,
     /// Lower-case exe name -> main windows left alone because the program
@@ -46,10 +107,12 @@ pub struct Status {
     /// Same, for windows of a Windows service (system level), which nothing
     /// can draw over.
     pub system: HashMap<String, usize>,
+    /// Waiting for a click, for "Why isn't this window dark?".
+    pub inspecting: bool,
 }
 
 pub type OnStatus = Box<dyn Fn(Status) + Send>;
-pub type OnOpen = Box<dyn Fn() + Send>;
+pub type OnRequest = Box<dyn Fn(Request) + Send>;
 
 pub struct Engine {
     tid: u32,
@@ -58,7 +121,7 @@ pub struct Engine {
 }
 
 impl Engine {
-    pub fn start(cfg: Config, on_status: OnStatus, on_open: OnOpen) -> Engine {
+    pub fn start(cfg: Config, on_status: OnStatus, on_request: OnRequest) -> Engine {
         let cmds = Arc::new(Mutex::new(Vec::new()));
         let (tx, rx) = mpsc::channel();
         let queue = cmds.clone();
@@ -72,7 +135,7 @@ impl Engine {
                     let _ = PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE);
                     let _ = tx.send(GetCurrentThreadId());
                 }
-                if let Err(e) = run(cfg, queue, on_status, on_open) {
+                if let Err(e) = run(cfg, queue, on_status, on_request) {
                     eprintln!("motor durdu: {e}");
                 }
             })
@@ -87,11 +150,11 @@ impl Engine {
             let _ = PostThreadMessageW(self.tid, WM_ENGINE, WPARAM(0), LPARAM(0));
         }
     }
-
 }
 
 thread_local! {
     static EVENTS: RefCell<Vec<(u32, isize)>> = const { RefCell::new(Vec::new()) };
+    static PICK: RefCell<Option<Pick>> = const { RefCell::new(None) };
 }
 
 unsafe extern "system" fn win_event(_: HWINEVENTHOOK, event: u32, hwnd: HWND, obj: i32, child: i32, _: u32, _: u32) {
@@ -101,10 +164,59 @@ unsafe extern "system" fn win_event(_: HWINEVENTHOOK, event: u32, hwnd: HWND, ob
     EVENTS.with(|e| e.borrow_mut().push((event, hwnd.0 as isize)));
 }
 
+/// "Why isn't this window dark?": the next click anywhere is caught, not
+/// passed on.
+struct Pick {
+    hook: HHOOK,
+    at: Option<POINT>,
+    released: bool,
+    cancelled: bool,
+    since: Instant,
+}
+
+unsafe extern "system" fn mouse_ll(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
+    if code >= 0 {
+        let info = &*(l.0 as *const MSLLHOOKSTRUCT);
+        let mut swallow = false;
+        PICK.with(|p| {
+            if let Some(s) = p.borrow_mut().as_mut() {
+                match w.0 as u32 {
+                    WM_LBUTTONDOWN if s.at.is_none() => {
+                        s.at = Some(info.pt);
+                        swallow = true;
+                    }
+                    WM_LBUTTONUP if s.at.is_some() && !s.released => {
+                        s.released = true;
+                        swallow = true;
+                    }
+                    WM_RBUTTONDOWN => {
+                        s.cancelled = true;
+                        swallow = true;
+                    }
+                    _ => {}
+                }
+            }
+        });
+        if swallow {
+            return LRESULT(1);
+        }
+    }
+    CallNextHookEx(None, code, w, l)
+}
+
 struct Manager {
     gpu: Gpu,
     rules: HashMap<String, AppRule>,
+    /// Every rule, on or off, for the inspector.
+    all_rules: HashMap<String, AppRule>,
+    everything: bool,
+    exclude: HashSet<String>,
+    style: String,
+    warm: f32,
+    schedule: (String, u32, u32),
     enabled: bool,
+    /// The schedule allows darkening right now.
+    in_time: bool,
     split: bool,
     layers: HashMap<isize, Layer>,
     exe_of: HashMap<u32, Option<String>>,
@@ -118,10 +230,36 @@ struct Manager {
     frame_event: HANDLE,
     since: Instant,
     on_status: OnStatus,
+    on_request: OnRequest,
     last_status: Option<Status>,
+    drawing: Option<String>,
+}
+
+fn minutes(hhmm: &str) -> u32 {
+    let (h, m) = hhmm.split_once(':').unwrap_or(("0", "0"));
+    (h.trim().parse::<u32>().unwrap_or(0) % 24) * 60 + m.trim().parse::<u32>().unwrap_or(0) % 60
 }
 
 impl Manager {
+    fn active(&self) -> bool {
+        self.enabled && self.in_time
+    }
+
+    fn schedule_allows(&self) -> bool {
+        match self.schedule.0.as_str() {
+            "windows" => apps_use_dark_theme(),
+            "times" => {
+                let (from, to, now) = (self.schedule.1, self.schedule.2, local_minutes());
+                if from <= to {
+                    now >= from && now < to
+                } else {
+                    now >= from || now < to
+                }
+            }
+            _ => true,
+        }
+    }
+
     fn exe_key(&mut self, pid: u32) -> Option<String> {
         if pid == std::process::id() {
             return None;
@@ -132,16 +270,35 @@ impl Manager {
             .clone()
     }
 
+    fn look(&self, rule: &AppRule) -> Look {
+        let (lmin, lmax) = rule.lightness(&self.style);
+        Look { lmin, lmax, warm: self.warm, split: self.split, owner: true }
+    }
+
+    /// The rule for an app: its own, or the default one in "every light
+    /// window" mode.
+    fn rule_of(&self, key: &str) -> Option<AppRule> {
+        if let Some(r) = self.rules.get(key) {
+            return Some(r.clone());
+        }
+        let own = self.all_rules.contains_key(key);
+        if self.everything && !own && !self.exclude.contains(key) && !SHELL_EXES.contains(&key) {
+            return Some(AppRule { exe: key.to_string(), ..Default::default() });
+        }
+        None
+    }
+
     /// The rule for a window, if it's one we should darken.
     fn rule_for(&mut self, h: HWND) -> Option<AppRule> {
-        if !self.enabled {
+        if !self.active() {
             return None;
         }
         // Cheap checks first: most windows belong to programs we don't touch,
         // and those never cost a call to the compositor.
         let pid = window_pid(h);
         let key = self.exe_key(pid)?;
-        let rule = self.rules.get(&key)?.clone();
+        let rule = self.rule_of(&key)?;
+        let implicit = !self.rules.contains_key(&key);
         unsafe {
             if !IsWindowVisible(h).as_bool() || !is_top_level(h) {
                 return None;
@@ -152,7 +309,17 @@ impl Manager {
                 return None;
             }
         }
-        if is_cloaked(h) || class_name(h) == OVERLAY_CLASS {
+        let class = class_name(h);
+        if is_cloaked(h) || class == OVERLAY_CLASS || class == "DeonyxSheet" {
+            return None;
+        }
+        if implicit && (SHELL_CLASSES.contains(&class.as_str()) || is_fullscreen(h)) {
+            return None;
+        }
+        // Windows that refuse screen capture (password managers, some
+        // meeting and banking apps) would come out as a grey box.
+        let mut affinity = 0u32;
+        if unsafe { GetWindowDisplayAffinity(h, &mut affinity) }.is_ok() && affinity != 0 {
             return None;
         }
         let r = frame_rect(h);
@@ -177,13 +344,13 @@ impl Manager {
             return;
         }
         let Some(rule) = self.rule_for(h) else { return };
-        let look = Look { lmin: rule.lmin(), lmax: rule.lmax(), split: self.split, owner: true };
-        match Layer::new(&self.gpu, h, &look) {
+        match Layer::new(&self.gpu, h, &self.look(&rule)) {
             Ok(mut l) => {
                 if let Err(e) = l.on_frame_arrived(self.frame_event) {
                     eprintln!("kare bildirimi kurulamadi: {e}");
                 }
                 l.exe = rule.key();
+                l.manual = rule.areas.clone();
                 if std::env::var_os("DEONYX_DEBUG").is_some() {
                     let r = frame_rect(h);
                     println!("+ {} {} {}x{} @ {},{} sahip={}", rule.exe, class_name(h), width(&r), height(&r), r.left, r.top, l.owned);
@@ -212,12 +379,16 @@ impl Manager {
         self.ignored.remove(&key);
     }
 
+    fn protects(&self, exe: &str) -> bool {
+        self.rule_of(exe).is_some_and(|r| r.protect)
+    }
+
     /// Only big windows of apps that want it can hold a viewport worth protecting.
     fn watch_main_windows(&self) {
         let big = self
             .layers
             .iter()
-            .filter(|(_, l)| self.rules.get(&l.exe).map(|r| r.protect).unwrap_or(false))
+            .filter(|(_, l)| self.protects(&l.exe))
             .filter(|(_, l)| {
                 let r = frame_rect(l.target);
                 width(&r) >= 400 && height(&r) >= 300
@@ -230,7 +401,7 @@ impl Manager {
     fn rescan(&mut self) {
         let mut admin: HashMap<String, usize> = HashMap::new();
         let mut system: HashMap<String, usize> = HashMap::new();
-        if self.enabled {
+        if self.active() {
             for h in top_level_windows() {
                 self.add(h);
                 let pid = window_pid(h);
@@ -254,18 +425,38 @@ impl Manager {
 
     fn apply(&mut self, cfg: Config) {
         self.enabled = cfg.enabled;
-        self.rules = cfg.apps.into_iter().filter(|r| r.enabled && !r.exe.is_empty()).map(|r| (r.key(), r)).collect();
-        if !self.enabled {
+        self.all_rules = cfg.apps.iter().filter(|r| !r.exe.is_empty()).map(|r| (r.key(), r.clone())).collect();
+        self.rules = self.all_rules.iter().filter(|(_, r)| r.enabled).map(|(k, r)| (k.clone(), r.clone())).collect();
+        self.everything = cfg.everything;
+        self.exclude = cfg.exclude.iter().map(|e| e.exe.to_ascii_lowercase()).collect();
+        self.style = cfg.style;
+        self.warm = cfg.warm.clamp(0.0, 1.0);
+        self.schedule = (cfg.schedule, minutes(&cfg.from), minutes(&cfg.to));
+        self.in_time = self.schedule_allows();
+        self.refresh();
+    }
+
+    /// Re-applies the rules to every layer, and drops what no longer fits.
+    fn refresh(&mut self) {
+        if !self.active() {
             // Nothing to capture while switched off.
             self.layers.clear();
         }
-        let rules = &self.rules;
-        self.layers.retain(|_, l| rules.contains_key(&l.exe));
-        for (k, l) in self.layers.iter_mut() {
-            let rule = &self.rules[&l.exe];
-            l.params.lmin = rule.lmin();
-            l.params.lmax = rule.lmax();
-            l.protect = if rule.protect { self.protect.get(k).cloned().unwrap_or_default() } else { Vec::new() };
+        let keep: Vec<isize> = self.layers.keys().copied().collect();
+        for k in keep {
+            let exe = self.layers[&k].exe.clone();
+            let Some(rule) = self.rule_of(&exe) else {
+                self.layers.remove(&k);
+                continue;
+            };
+            let look = self.look(&rule);
+            let protect = if rule.protect { self.protect.get(&k).cloned().unwrap_or_default() } else { Vec::new() };
+            let l = self.layers.get_mut(&k).unwrap();
+            l.params.lmin = look.lmin;
+            l.params.lmax = look.lmax;
+            l.params.warm = look.warm;
+            l.manual = rule.areas.clone();
+            l.protect = protect;
             l.redraw(&self.gpu);
         }
         self.ignored.clear();
@@ -276,23 +467,33 @@ impl Manager {
 
     fn toggle(&mut self) {
         self.enabled = !self.enabled;
-        if self.enabled {
-            self.rescan();
-        } else {
-            self.layers.clear();
+        self.refresh();
+    }
+
+    fn check_schedule(&mut self) {
+        let now = self.schedule_allows();
+        if now != self.in_time {
+            self.in_time = now;
+            self.refresh();
         }
-        self.publish();
     }
 
     fn publish(&mut self) {
         let mut running: HashMap<String, usize> = HashMap::new();
         for l in self.layers.values() {
             // Count main windows only, not menus and tooltips.
-            if unsafe { GetWindow(l.target, GW_OWNER) }.is_err() {
+            if unsafe { GetWindow(l.target, GW_OWNER) }.is_err() && !l.left_as_is() {
                 *running.entry(l.exe.clone()).or_default() += 1;
             }
         }
-        let s = Status { enabled: self.enabled, running, admin: self.admin.clone(), system: self.system.clone() };
+        let s = Status {
+            enabled: self.enabled,
+            waiting: self.enabled && !self.in_time,
+            running,
+            admin: self.admin.clone(),
+            system: self.system.clone(),
+            inspecting: PICK.with(|p| p.borrow().is_some()),
+        };
         if self.last_status.as_ref() != Some(&s) {
             (self.on_status)(s.clone());
             self.last_status = Some(s);
@@ -321,19 +522,33 @@ impl Manager {
     }
 
     fn frames(&mut self) {
+        let mut poke = Vec::new();
+        let mut changed = false;
         for (k, l) in self.layers.iter_mut() {
+            let was = l.left_as_is();
             match l.poll(&self.gpu, true) {
-                // The window changed: if a 3D view moved with it, find out now
-                // rather than at the next round.
-                Ok(true) if self.rules.get(&l.exe).is_some_and(|r| r.protect) => self.finder.poke(*k),
-                Ok(_) => {}
+                Ok(true) => {
+                    poke.push((*k, l.exe.clone()));
+                    changed |= was != l.left_as_is();
+                }
+                Ok(false) => {}
                 Err(e) => eprintln!("kare hatasi: {e}"),
             }
+        }
+        // The window changed: if a 3D view moved with it, find out now
+        // rather than at the next round.
+        for (k, exe) in poke {
+            if self.protects(&exe) {
+                self.finder.poke(k);
+            }
+        }
+        if changed {
+            self.publish();
         }
         if self.since.elapsed().as_secs_f64() >= 5.0 {
             let (f, w): (u32, f64) =
                 self.layers.values().map(|l| (l.frames, l.work_ms)).fold((0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1));
-            if f > 0 {
+            if f > 0 && std::env::var_os("DEONYX_DEBUG").is_some() {
                 println!("{} pencere, {} kare / 5 sn, kare basina {:.2} ms", self.layers.len(), f, w / f as f64);
             }
             for l in self.layers.values_mut() {
@@ -347,16 +562,156 @@ impl Manager {
     fn take_protect(&mut self) {
         let Some(found) = self.finder.take() else { return };
         self.protect = found;
-        for (k, l) in self.layers.iter_mut() {
-            if !self.rules.get(&l.exe).map(|r| r.protect).unwrap_or(false) {
+        let keys: Vec<isize> = self.layers.keys().copied().collect();
+        for k in keys {
+            if !self.protects(&self.layers[&k].exe) {
                 continue;
             }
-            let p = self.protect.get(k).cloned().unwrap_or_default();
+            let p = self.protect.get(&k).cloned().unwrap_or_default();
+            let l = self.layers.get_mut(&k).unwrap();
             if p != l.protect {
                 l.protect = p;
                 l.redraw(&self.gpu);
             }
         }
+    }
+
+    /// Ctrl+Alt+F: the app of the window in front.
+    fn front_app(&mut self) {
+        unsafe {
+            let h = GetAncestor(GetForegroundWindow(), GA_ROOTOWNER);
+            let pid = window_pid(h);
+            if h.is_invalid() || pid == std::process::id() {
+                return;
+            }
+            if let Some(path) = crate::apps::exe_path(pid) {
+                let exe = path.rsplit('\\').next().unwrap_or(&path).to_string();
+                (self.on_request)(Request::ToggleApp { exe, path });
+            }
+        }
+    }
+
+    /// Why a window is (or isn't) dark.
+    fn diagnose(&mut self, h: HWND) -> Report {
+        let h = unsafe { GetAncestor(h, GA_ROOT) };
+        let pid = window_pid(h);
+        let path = crate::apps::exe_path(pid).unwrap_or_default();
+        let exe = path.rsplit('\\').next().unwrap_or("").to_string();
+        let key = exe.to_ascii_lowercase();
+        let mut title = [0u16; 256];
+        let n = unsafe { GetWindowTextW(h, &mut title) };
+        let mut r = Report { exe, path, title: String::from_utf16_lossy(&title[..n.max(0) as usize]), reason: String::new() };
+        let class = class_name(h);
+        let mut affinity = 0u32;
+        let ex = unsafe { GetWindowLongW(h, GWL_EXSTYLE) } as u32;
+        r.reason = if pid == std::process::id() {
+            "own"
+        } else if SHELL_CLASSES.contains(&class.as_str()) || SHELL_EXES.contains(&key.as_str()) {
+            "shell"
+        } else if let Some(l) = self.layers.get(&(h.0 as isize)) {
+            if l.left_as_is() {
+                "already_dark"
+            } else {
+                "darkened"
+            }
+        } else if !self.enabled {
+            "off"
+        } else if !self.in_time {
+            "waiting"
+        } else if self.all_rules.get(&key).is_some_and(|x| !x.enabled) {
+            "app_off"
+        } else if self.everything && self.exclude.contains(&key) {
+            "excluded"
+        } else if !self.everything && !self.all_rules.contains_key(&key) {
+            "not_listed"
+        } else if unsafe { GetWindowDisplayAffinity(h, &mut affinity) }.is_ok() && affinity != 0 {
+            "no_capture"
+        } else if self.above_us(pid) {
+            if self.level(pid) >= LEVEL_SYSTEM {
+                "service"
+            } else {
+                "admin"
+            }
+        } else if ex & WS_EX_TRANSPARENT.0 != 0 && ex & WS_EX_LAYERED.0 != 0 {
+            "helper"
+        } else if is_fullscreen(h) {
+            "fullscreen"
+        } else if self.ignored.contains(&(h.0 as isize)) {
+            "failed"
+        } else {
+            "unknown"
+        }
+        .to_string();
+        r
+    }
+
+    fn start_inspect(&mut self) {
+        if PICK.with(|p| p.borrow().is_some()) {
+            return;
+        }
+        let hook = unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_ll), None, 0) };
+        if let Ok(hook) = hook {
+            PICK.with(|p| *p.borrow_mut() = Some(Pick { hook, at: None, released: false, cancelled: false, since: Instant::now() }));
+        }
+        self.publish();
+    }
+
+    fn stop_inspect(&mut self) {
+        if let Some(p) = PICK.with(|p| p.borrow_mut().take()) {
+            unsafe {
+                let _ = UnhookWindowsHookEx(p.hook);
+            }
+        }
+        self.publish();
+    }
+
+    /// The inspector caught its click (or gave up).
+    fn check_inspect(&mut self) {
+        let state = PICK.with(|p| p.borrow().as_ref().map(|s| (s.at, s.released, s.cancelled, s.since.elapsed())));
+        let Some((at, released, cancelled, age)) = state else { return };
+        if cancelled || age > Duration::from_secs(30) {
+            self.stop_inspect();
+        } else if let (Some(pt), true) = (at, released) {
+            self.stop_inspect();
+            let h = unsafe { WindowFromPoint(pt) };
+            let report = self.diagnose(h);
+            (self.on_request)(Request::Inspected(report));
+        }
+    }
+
+    fn start_drawing(&mut self, exe: String, hint: String) {
+        let key = exe.to_ascii_lowercase();
+        // The app's biggest window.
+        let mut best: Option<(i64, HWND)> = None;
+        for h in top_level_windows() {
+            unsafe {
+                if !IsWindowVisible(h).as_bool() || GetWindow(h, GW_OWNER).is_ok() || IsIconic(h).as_bool() {
+                    continue;
+                }
+            }
+            if self.exe_key(window_pid(h)).as_deref() != Some(key.as_str()) {
+                continue;
+            }
+            let r = frame_rect(h);
+            let area = width(&r) as i64 * height(&r) as i64;
+            if best.is_none_or(|(a, _)| area > a) {
+                best = Some((area, h));
+            }
+        }
+        match best {
+            Some((_, h)) if select::begin(h, &hint).is_ok() => self.drawing = Some(exe),
+            _ => (self.on_request)(Request::Area { exe, area: Err("not_open".into()) }),
+        }
+    }
+
+    fn check_drawing(&mut self) {
+        let Some(outcome) = select::take() else { return };
+        let exe = self.drawing.take().unwrap_or_default();
+        let area = match outcome {
+            select::Outcome::Drawn(a) => Ok(a),
+            select::Outcome::Cancelled => Err("cancelled".to_string()),
+        };
+        (self.on_request)(Request::Area { exe, area });
     }
 }
 
@@ -396,7 +751,7 @@ fn signal_window(msg: u32) -> Option<HWND> {
     }
 }
 
-fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_open: OnOpen) -> Result<()> {
+fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_request: OnRequest) -> Result<()> {
     crate::layer::register_class()?;
     let open_msg = unsafe { RegisterWindowMessageW(crate::admin::OPEN_MSG) };
     let signal = signal_window(open_msg);
@@ -404,7 +759,14 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_open: On
     let mut m = Manager {
         gpu: Gpu::new()?,
         rules: HashMap::new(),
+        all_rules: HashMap::new(),
+        everything: false,
+        exclude: HashSet::new(),
+        style: "gray".into(),
+        warm: 0.0,
+        schedule: ("always".into(), 0, 0),
         enabled: true,
+        in_time: true,
         split: std::env::var_os("DEONYX_SPLIT").is_some(),
         layers: HashMap::new(),
         exe_of: HashMap::new(),
@@ -418,7 +780,9 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_open: On
         frame_event,
         since: Instant::now(),
         on_status,
+        on_request,
         last_status: None,
+        drawing: None,
     };
     m.apply(cfg);
 
@@ -430,28 +794,34 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_open: On
             hook(EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_LOCATIONCHANGE),
             hook(EVENT_OBJECT_CLOAKED, EVENT_OBJECT_UNCLOAKED),
         ];
-        let hotkey = RegisterHotKey(None, HOTKEY_ID, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, b'D' as u32).is_ok();
-        if !hotkey {
-            eprintln!("Ctrl+Alt+D baska bir program tarafindan kullaniliyor");
+        let all = RegisterHotKey(None, HOTKEY_ALL, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, b'D' as u32).is_ok();
+        let front = RegisterHotKey(None, HOTKEY_FRONT, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, b'F' as u32).is_ok();
+        if !all || !front {
+            eprintln!("bir kisayol baska bir program tarafindan kullaniliyor");
         }
 
         let mut msg = MSG::default();
         let mut last_rescan = Instant::now();
         let mut last_purge = Instant::now();
+        let mut last_schedule = Instant::now();
         'outer: loop {
             MsgWaitForMultipleObjects(Some(&[frame_event]), false, 250, QS_ALLINPUT);
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                 if msg.message == open_msg {
-                    on_open();
+                    (m.on_request)(Request::OpenSettings);
                     continue;
                 }
                 match msg.message {
-                    WM_HOTKEY => m.toggle(),
+                    WM_HOTKEY if msg.wParam.0 as i32 == HOTKEY_ALL => m.toggle(),
+                    WM_HOTKEY if msg.wParam.0 as i32 == HOTKEY_FRONT => m.front_app(),
                     WM_ENGINE => {
                         let list: Vec<Cmd> = std::mem::take(&mut *cmds.lock().unwrap());
                         for c in list {
                             match c {
                                 Cmd::Config(cfg) => m.apply(cfg),
+                                Cmd::Inspect => m.start_inspect(),
+                                Cmd::StopInspect => m.stop_inspect(),
+                                Cmd::DrawArea { exe, hint } => m.start_drawing(exe, hint),
                                 Cmd::Quit => break 'outer,
                             }
                         }
@@ -469,9 +839,17 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_open: On
             m.frames();
             m.take_protect();
             m.sync_all();
+            m.check_inspect();
+            if select::active() {
+                m.check_drawing();
+            }
             if last_rescan.elapsed().as_secs() >= 1 {
                 m.rescan();
                 last_rescan = Instant::now();
+            }
+            if last_schedule.elapsed().as_secs() >= 5 {
+                m.check_schedule();
+                last_schedule = Instant::now();
             }
             // Process ids get reused; forget old ones now and then.
             if last_purge.elapsed().as_secs() >= 10 {
@@ -480,6 +858,7 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_open: On
                 last_purge = Instant::now();
             }
         }
+        m.stop_inspect();
         m.layers.clear();
         if let Some(h) = signal {
             let _ = DestroyWindow(h);
@@ -487,9 +866,8 @@ fn run(cfg: Config, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_open: On
         for h in hooks {
             let _ = UnhookWinEvent(h);
         }
-        if hotkey {
-            let _ = UnregisterHotKey(None, HOTKEY_ID);
-        }
+        let _ = UnregisterHotKey(None, HOTKEY_ALL);
+        let _ = UnregisterHotKey(None, HOTKEY_FRONT);
     }
     Ok(())
 }
