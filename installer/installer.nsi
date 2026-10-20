@@ -518,6 +518,17 @@ Function .onInit
     StrCpy $UpdateMode 1
   ${EndIf}
 
+  ; Deonyx: the language picked on the welcome page (the installer restarts
+  ; itself with /L=), else the one picked last time.
+  ClearErrors
+  ${GetOptions} $CMDLINE "/L=" $0
+  ${IfNot} ${Errors}
+    StrCpy $LANGUAGE $0
+  ${Else}
+    ReadRegStr $0 HKCU "${MANUPRODUCTKEY}" "Installer Language"
+    ${IfThen} $0 != "" ${|} StrCpy $LANGUAGE $0 ${|}
+  ${EndIf}
+
   !if "${DISPLAYLANGUAGESELECTOR}" == "true"
     !insertmacro MUI_LANGDLL_DISPLAY
   !endif

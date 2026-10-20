@@ -4,6 +4,11 @@
 !define DEONYX_DIR "${__FILEDIR__}"
 !include "${DEONYX_DIR}\theme.nsh"
 
+!macro NSIS_HOOK_POSTINSTALL
+  ; The uninstaller and the next installer speak the language picked now.
+  WriteRegStr HKCU "${MANUPRODUCTKEY}" "Installer Language" $LANGUAGE
+!macroend
+
 !macro NSIS_HOOK_PREUNINSTALL
   ; Close Deonyx first, so its dark layers go away with it.
   nsExec::Exec 'taskkill /F /IM deonyx.exe'

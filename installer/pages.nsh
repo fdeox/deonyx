@@ -66,8 +66,62 @@ LangString deonyxWelcomeText ${LANG_SIMPCHINESE} "Deonyx 能让任何 Windows �
 LangString deonyxFinishTitle ${LANG_SIMPCHINESE} "Deonyx 已准备好"
 LangString deonyxFinishText ${LANG_SIMPCHINESE} "Deonyx 在时钟旁边的通知区域里。$\r$\n$\r$\n提示：Ctrl+Alt+F 调暗前台应用，Ctrl+Alt+D 开启或关闭调暗。"
 
+; The languages of the welcome page's menu: NSIS language id and own name.
+!macro DEONYX_LANGS DO
+  !insertmacro ${DO} 1033 "English"
+  !insertmacro ${DO} 1055 "Türkçe"
+  !insertmacro ${DO} 1031 "Deutsch"
+  !insertmacro ${DO} 1036 "Français"
+  !insertmacro ${DO} 1034 "Español"
+  !insertmacro ${DO} 1040 "Italiano"
+  !insertmacro ${DO} 1046 "Português (Brasil)"
+  !insertmacro ${DO} 1043 "Nederlands"
+  !insertmacro ${DO} 1049 "Русский"
+  !insertmacro ${DO} 1058 "Українська"
+  !insertmacro ${DO} 1041 "日本語"
+  !insertmacro ${DO} 1042 "한국어"
+  !insertmacro ${DO} 2052 "简体中文"
+!macroend
+
+!macro DEONYX_LANG_ADD ID NAME
+  ${NSD_CB_AddString} $deonyx.langs "${NAME}"
+  ${If} $LANGUAGE = ${ID}
+    StrCpy $1 "${NAME}"
+  ${EndIf}
+!macroend
+
+!macro DEONYX_LANG_FIND ID NAME
+  ${If} $1 == "${NAME}"
+    StrCpy $2 ${ID}
+  ${EndIf}
+!macroend
+
+Var deonyx.langs
+
 Function DeonyxWelcomeShow
   !insertmacro DEONYX_FULL_PAGE $mui.WelcomePage $mui.WelcomePage.Image
+  ; A language menu under the text. Picking another language starts the
+  ; installer again in it.
+  ${NSD_CreateDropList} 120u 172u 120u 120u ""
+  Pop $deonyx.langs
+  StrCpy $1 "English"
+  !insertmacro DEONYX_LANGS DEONYX_LANG_ADD
+  ${NSD_CB_SelectString} $deonyx.langs $1
+  System::Call 'uxtheme::SetWindowTheme(p $deonyx.langs, w "DarkMode_CFD", p 0)'
+  SetCtlColors $deonyx.langs ${DEONYX_TEXT} ${DEONYX_FIELD}
+  ${NSD_OnChange} $deonyx.langs DeonyxLanguagePicked
+FunctionEnd
+
+Function DeonyxLanguagePicked
+  Pop $0
+  ${NSD_GetText} $deonyx.langs $1
+  StrCpy $2 $LANGUAGE
+  !insertmacro DEONYX_LANGS DEONYX_LANG_FIND
+  ${If} $2 != $LANGUAGE
+    Exec '"$EXEPATH" /L=$2'
+    ; Quit does nothing in a control's callback; Cancel closes for good.
+    SendMessage $HWNDPARENT ${WM_COMMAND} 2 0
+  ${EndIf}
 FunctionEnd
 
 Function DeonyxFinishShow
