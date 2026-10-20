@@ -163,7 +163,7 @@ pub fn load() -> Config {
                 std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
             ));
             let _ = std::fs::copy(&p, aside);
-            eprintln!("config.json okunamadi: {e}");
+            eprintln!("config.json could not be read: {e}");
             Config::default()
         }
     }

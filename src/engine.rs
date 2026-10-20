@@ -158,7 +158,7 @@ impl Engine {
                     let _ = tx.send(GetCurrentThreadId());
                 }
                 if let Err(e) = run(cfg, role, queue, on_status, on_request) {
-                    eprintln!("motor durdu: {e}");
+                    eprintln!("engine stopped: {e}");
                 }
             })
             .expect("engine thread");
@@ -397,13 +397,13 @@ impl Manager {
         match Layer::new(&self.gpu, h, &self.look(&rule)) {
             Ok(mut l) => {
                 if let Err(e) = l.on_frame_arrived(self.frame_event) {
-                    eprintln!("kare bildirimi kurulamadi: {e}");
+                    eprintln!("frame notification failed: {e}");
                 }
                 l.exe = rule.key();
                 l.manual = rule.areas.clone();
                 if std::env::var_os("DEONYX_DEBUG").is_some() {
                     let r = frame_rect(h);
-                    println!("+ {} {} {}x{} @ {},{} sahip={}", rule.exe, class_name(h), width(&r), height(&r), r.left, r.top, l.owned);
+                    println!("+ {} {} {}x{} @ {},{} owned={}", rule.exe, class_name(h), width(&r), height(&r), r.left, r.top, l.owned);
                 }
                 if rule.protect {
                     if let Some(p) = self.protect.get(&key) {
@@ -415,7 +415,7 @@ impl Manager {
                 self.publish();
             }
             Err(e) => {
-                eprintln!("yakalanamadi ({}): {e}", class_name(h));
+                eprintln!("capture failed ({}): {e}", class_name(h));
                 self.ignored.insert(key);
             }
         }
@@ -503,7 +503,7 @@ impl Manager {
                 self.helper_starts.push(Instant::now());
                 self.upper = true;
             }
-            Err(e) => eprintln!("yardimci baslatilamadi: {e}"),
+            Err(e) => eprintln!("helper failed to start: {e}"),
         }
     }
 
@@ -666,7 +666,7 @@ impl Manager {
                     changed |= was != l.left_as_is();
                 }
                 Ok(false) => {}
-                Err(e) => eprintln!("kare hatasi: {e}"),
+                Err(e) => eprintln!("frame error: {e}"),
             }
         }
         // The window changed: if a 3D view moved with it, find out now
@@ -683,7 +683,7 @@ impl Manager {
             let (f, w): (u32, f64) =
                 self.layers.values().map(|l| (l.frames, l.work_ms)).fold((0, 0.0), |a, b| (a.0 + b.0, a.1 + b.1));
             if f > 0 && std::env::var_os("DEONYX_DEBUG").is_some() {
-                println!("{} pencere, {} kare / 5 sn, kare basina {:.2} ms", self.layers.len(), f, w / f as f64);
+                println!("{} windows, {} frames / 5 s, {:.2} ms per frame", self.layers.len(), f, w / f as f64);
             }
             for l in self.layers.values_mut() {
                 l.frames = 0;
@@ -1003,7 +1003,7 @@ fn run(cfg: Config, role: Role, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus,
             let all = RegisterHotKey(None, HOTKEY_ALL, mods, b'D' as u32).is_ok();
             let front = RegisterHotKey(None, HOTKEY_FRONT, mods, b'F' as u32).is_ok();
             if !all || !front {
-                eprintln!("bir kisayol baska bir program tarafindan kullaniliyor");
+                eprintln!("a hotkey is taken by another program");
             }
         }
 

@@ -444,7 +444,7 @@ impl Layer {
             };
             self.params.amount = if on { 1.0 } else { 0.0 };
             if !on && (was > 0.0 || !self.measured) {
-                println!("  zaten koyu, dokunulmadi: {} (aydinlik {:.2})", crate::win::class_name(self.target), avg);
+                println!("  dark already, left alone: {} (lightness {:.2})", crate::win::class_name(self.target), avg);
             }
             self.measured = true;
         }

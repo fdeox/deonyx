@@ -400,7 +400,7 @@ pub fn installed() -> Vec<Running> {
     let clock = Instant::now();
     let lap = |what: &str| {
         if debug {
-            eprintln!("kurulu programlar: {what} {} ms", clock.elapsed().as_millis());
+            eprintln!("installed programs: {what} {} ms", clock.elapsed().as_millis());
         }
     };
     let mut found: Vec<(String, PathBuf)> = Vec::new();

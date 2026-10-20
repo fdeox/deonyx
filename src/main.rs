@@ -367,7 +367,7 @@ fn open_settings(app: &AppHandle) {
         .focused(!testing())
         .build();
     if let Err(e) = built {
-        eprintln!("ayarlar penceresi acilamadi: {e}");
+        eprintln!("settings window failed to open: {e}");
     }
 }
 

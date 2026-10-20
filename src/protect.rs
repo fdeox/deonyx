@@ -71,7 +71,7 @@ impl Finder {
         let (s, d) = (shared.clone(), dirty.clone());
         std::thread::spawn(move || {
             if let Err(e) = run(s, d) {
-                eprintln!("3D alan arayici durdu: {e}");
+                eprintln!("3D view finder stopped: {e}");
             }
         });
         Finder { shared, dirty }
@@ -136,7 +136,7 @@ fn run(shared: Guarded, dirty: Arc<AtomicBool>) -> Result<()> {
                     let rects: Vec<RECT> = found.iter().map(|(r, _)| *r).collect();
                     if reported.insert(h) {
                         println!(
-                            "3D alan taramasi {:.0} ms, korunacak alan {}: {:?}",
+                            "3D view scan {:.0} ms, protected areas {}: {:?}",
                             t.elapsed().as_secs_f64() * 1000.0,
                             rects.len(),
                             rects.iter().map(|r| (r.left, r.top, width(r), height(r))).collect::<Vec<_>>()
@@ -230,7 +230,7 @@ fn scan(
                 || (kind == UIA_ImageControlTypeId && share > 0.01);
             if keep {
                 if std::env::var_os("DEONYX_DEBUG").is_some() {
-                    println!("  koru: sinif {class:?} kimlik {id:?} tur {} pay {share:.2}", kind.0);
+                    println!("  protect: class {class:?} id {id:?} type {} share {share:.2}", kind.0);
                 }
                 out.push((r, e));
             }

@@ -6,7 +6,7 @@
 
 <p align="center">Dark mode for any Windows app. Smart, flicker-free, and it keeps your 3D view's real colors.</p>
 
-> **Status:** early development. There is no release yet.
+<p align="center"><a href="https://github.com/fdeox/deonyx/releases/latest"><b>Download for Windows</b></a></p>
 
 ## Why
 
@@ -19,7 +19,7 @@ Plenty of Windows apps still have no dark mode. SketchUp is one of them, and its
 - **Every window of the app.** Menus, lists, tooltips and dialogs are darkened too, in less than a frame after they appear.
 - **No flash.** The dark layer is tied to the app's own window, so switching windows never shows the light version.
 - **Leaves dark things alone.** A window that is already dark is shown as it is.
-- **Never touches the app.** Deonyx captures the window with Windows.Graphics.Capture and draws the result in a click-through layer on top of it. Nothing is injected into the app, and nothing leaves your PC.
+- **Never touches the app.** Deonyx captures the window with Windows.Graphics.Capture and draws the result in a click-through layer on top of it. Nothing is injected into the app, and nothing it shows leaves your PC.
 
 ## What you can do
 
@@ -32,16 +32,28 @@ Plenty of Windows apps still have no dark mode. SketchUp is one of them, and its
 - **Run as administrator** to darken apps like Task Manager, and **start with Windows** so it's always there. Normal apps are still darkened without administrator rights, so tools like AutoHotkey keep working in them.
 - In 13 languages: English, Türkçe, Deutsch, Français, Español, Italiano, Português, Nederlands, Русский, Українська, 日本語, 한국어 and 简体中文. It keeps itself up to date.
 
+## Install
+
+Download `Deonyx_..._x64-setup.exe` from the [latest release](https://github.com/fdeox/deonyx/releases/latest) and run it. It installs for your user only, without administrator rights. Deonyx needs Windows 11, or Windows 10 version 2004 or later.
+
+Deonyx isn't code-signed yet, so Windows SmartScreen may say it protected your PC. Click **More info**, then **Run anyway**.
+
+Deonyx lives in the tray. Click its icon, choose **Add an app**, and pick a program from the open or installed ones (or browse for it). Each app has its own background darkness and text brightness. Settings are kept in `%APPDATA%\Deonyx\config.json`. To remove Deonyx, uninstall it from Settings > Apps like any other app.
+
+## Privacy
+
+Deonyx sends nothing anywhere. The only thing it asks the internet is whether a new version is out (from this repository's releases), and you can turn that off in its settings.
+
 ## Build
 
-Needs Windows 11 (Windows 10 version 2004 or later should work but is untested) and [Rust](https://rustup.rs).
+Needs [Rust](https://rustup.rs).
 
 ```
 cargo build --release
 target\release\deonyx.exe
 ```
 
-Deonyx lives in the tray. Click its icon, choose **Add an app**, and pick a program from the open or installed ones (or browse for it). Each app has its own background darkness and text brightness. Settings are kept in `%APPDATA%\Deonyx\config.json`.
+The installer is built with the [Tauri CLI](https://v2.tauri.app/reference/cli/): `cargo tauri build --bundles nsis`.
 
 ## License
 
