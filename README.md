@@ -29,8 +29,8 @@ Plenty of Windows apps still have no dark mode. SketchUp is one of them, and its
 - **Keep real colors where you want them.** Draw a box over a video, a canvas or a 3D view and it stays as it is, even when the window is resized.
 - **Ask why.** Click any window and Deonyx tells you why it is or isn't dark, with a button that fixes it when it can.
 - **Hotkeys.** Ctrl+Alt+F darkens or restores the app in front of you, Ctrl+Alt+D turns darkening on and off.
-- **Run as administrator** to darken apps like Task Manager, and **start with Windows** so it's always there.
-- In English and Turkish, and it keeps itself up to date.
+- **Run as administrator** to darken apps like Task Manager, and **start with Windows** so it's always there. Normal apps are still darkened without administrator rights, so tools like AutoHotkey keep working in them.
+- In 13 languages: English, Türkçe, Deutsch, Français, Español, Italiano, Português, Nederlands, Русский, Українська, 日本語, 한국어 and 简体中文. It keeps itself up to date.
 
 ## Build
 
