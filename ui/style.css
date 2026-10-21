@@ -277,6 +277,37 @@ select:focus, input[type="time"]:focus { border-color: var(--accent); }
 }
 .result-text strong { display: block; }
 
+/* profiles */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 3px 3px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+.chip.on { background: var(--accent-bg); border-color: var(--accent); }
+.chip > button { border: none; background: none; padding: 4px 6px; color: var(--text); }
+.chip > button[data-act="use"] { padding-left: 0; }
+.chip.on > button[data-act="use"] { font-weight: 600; }
+.chip > button[data-act="delete"] { color: var(--faint); border-radius: 999px; padding: 4px 9px; }
+.chip > button[data-act="delete"]:hover { color: var(--danger); background: #f0848a1a; }
+.chip > button.sure { color: var(--danger); }
+.profile-form { display: flex; gap: 8px; margin-bottom: 10px; }
+.profile-form input {
+  flex: 1;
+  padding: 8px 12px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  font: inherit;
+  outline: none;
+}
+.profile-form input:focus { border-color: var(--accent); }
+
 .banner {
   display: flex;
   align-items: center;
@@ -301,3 +332,88 @@ select:focus, input[type="time"]:focus { border-color: var(--accent); }
   box-shadow: 0 8px 24px #0008;
   z-index: 10;
 }
+
+/* notes, hotkeys, the command line */
+.note {
+  padding: 10px 12px;
+  font-size: 13px;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.note b, .native b { color: var(--text); font-weight: 600; }
+.native { margin-top: 4px; }
+kbd.taken { color: var(--danger); background: #f0848a1a; border-color: #f0848a55; }
+kbd.rec { color: #fff; background: var(--accent); border-color: var(--accent); }
+code.cli {
+  display: block;
+  margin-top: 6px;
+  font: 12px "Cascadia Mono", Consolas, monospace;
+  color: var(--accent-2);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* sunset to sunrise */
+.row.column { flex-direction: column; align-items: stretch; gap: 8px; }
+.place { position: relative; }
+.place input {
+  width: 100%;
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  padding: 7px 12px;
+  outline: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.place input:focus { border-color: var(--accent); }
+.place-list {
+  position: absolute;
+  z-index: 5;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px #0008;
+}
+.place-list button { text-align: left; color: var(--text); }
+
+/* welcome and what's new */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: #08080cd0;
+}
+.sheet {
+  width: min(520px, calc(100% - 48px));
+  padding: 28px;
+  background: var(--panel);
+  border: 1px solid var(--line-2);
+  border-radius: 16px;
+  box-shadow: 0 16px 48px #000a;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+.sheet .logo { width: 48px; height: 48px; margin-bottom: 14px; }
+.steps { display: flex; flex-direction: column; gap: 12px; min-height: 150px; }
+.steps .seg { align-self: flex-start; margin-top: 6px; }
+.keys-list { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.keys-list kbd { margin-right: 8px; }
+.sheet-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 22px; }
+.dots { display: flex; gap: 6px; }
+.dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--line-2); }
+.dots i.on { background: var(--accent-2); }
+#news-list { margin: 14px 0 0; padding-left: 20px; color: var(--muted); display: flex; flex-direction: column; gap: 8px; }
+#news-list li::marker { color: var(--accent-2); }

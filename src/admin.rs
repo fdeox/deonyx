@@ -31,8 +31,10 @@ pub fn task_exists() -> bool {
     schtasks(&["/Query", "/TN", TASK])
 }
 
+/// Starts Deonyx through its task. Never from a test copy: that would start
+/// the real one.
 pub fn run_task() -> bool {
-    task_exists() && schtasks(&["/Run", "/TN", TASK])
+    std::env::var_os("DEONYX_CONFIG_DIR").is_none() && task_exists() && schtasks(&["/Run", "/TN", TASK])
 }
 
 fn xml_escape(s: &str) -> String {
@@ -170,7 +172,8 @@ pub fn relaunch_normal() {
 /// Asks an already running Deonyx to open its settings. False if none runs.
 pub fn ask_running_to_open() -> bool {
     unsafe {
-        let Ok(h) = FindWindowW(SIGNAL_CLASS, PCWSTR::null()) else { return false };
+        // A test copy finds only the copy DEONYX_TARGET_PID names.
+        let Some(h) = crate::cli::signal_window() else { return false };
         let msg = RegisterWindowMessageW(OPEN_MSG);
         PostMessageW(Some(h), msg, WPARAM(0), LPARAM(0)).is_ok()
     }

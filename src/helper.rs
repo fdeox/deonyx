@@ -28,6 +28,12 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 pub const CONFIG: usize = 0x4458_4346;
 /// What the helper darkens, helper -> main.
 pub const STATUS: usize = 0x4458_5354;
+/// Peeking at the real colours starts (true) or ends, main -> helper.
+pub const PEEK: usize = 0x4458_504B;
+/// A command from the command line to the main copy (cli.rs).
+pub const ORDER: usize = 0x4458_4F52;
+/// The window hotkey hit a window the helper darkens, main -> helper.
+pub const WINDOW: usize = 0x4458_574E;
 
 pub struct Helper {
     pub pid: u32,
@@ -146,6 +152,18 @@ pub fn send<T: Serialize>(to: HWND, from: Option<HWND>, kind: usize, value: &T) 
     unsafe {
         SendMessageTimeoutW(to, WM_COPYDATA, WPARAM(from), LPARAM(&data as *const _ as isize), SMTO_ABORTIFHUNG, 1000, None).0 != 0
     }
+}
+
+/// Like send(), and returns what the other side answered (0 counts as no
+/// answer).
+pub fn ask<T: Serialize>(to: HWND, kind: usize, value: &T) -> Option<isize> {
+    let bytes = serde_json::to_vec(value).ok()?;
+    let data = COPYDATASTRUCT { dwData: kind, cbData: bytes.len() as u32, lpData: bytes.as_ptr() as *mut c_void };
+    let mut result = 0usize;
+    let ok = unsafe {
+        SendMessageTimeoutW(to, WM_COPYDATA, WPARAM(0), LPARAM(&data as *const _ as isize), SMTO_ABORTIFHUNG, 1000, Some(&mut result))
+    };
+    (ok.0 != 0 && result != 0).then_some(result as isize)
 }
 
 /// What a WM_COPYDATA brought: its kind, the sender's process and the bytes.

@@ -2,9 +2,10 @@
 // the result right above it.
 
 use std::ffi::c_void;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use windows::core::{factory, w, Interface, Result};
+use windows::Foundation::TimeSpan;
 use windows::Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession};
 use windows::Graphics::DirectX::DirectXPixelFormat;
 use windows::Graphics::SizeInt32;
@@ -19,10 +20,17 @@ use windows::Win32::System::WinRT::Direct3D11::IDirect3DDxgiInterfaceAccess;
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
+use crate::desk::Desktop;
 use crate::gpu::{Gpu, Params, MAX_RECTS};
+use crate::photos;
 use crate::win::{frame_rect, height, width};
 
 pub const OVERLAY_CLASS: &str = "DeonyxOverlay";
+
+/// How often a window is looked at for photos while it changes; while the
+/// answer stays the same, less and less often, down to PHOTO_CALM.
+const PHOTO_EVERY: Duration = Duration::from_millis(60);
+const PHOTO_CALM: Duration = Duration::from_millis(480);
 
 unsafe extern "system" fn wndproc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match m {
@@ -50,8 +58,21 @@ pub struct Look {
     pub lmin: f32,
     pub lmax: f32,
     pub warm: f32,
+    /// Lifts faint text: 1 leaves it, lower lifts more (see shader.hlsl).
+    pub boost: f32,
     pub split: bool,
     pub owner: bool,
+    /// Look for photos in the window.
+    pub photos: bool,
+    /// Hide the layer from screen sharing and screenshots.
+    pub hidden: bool,
+    /// How strongly to show the darkening (0 while real colours are peeked).
+    pub strength: f32,
+    /// Fade in from the real colours once the first frame is there, rather
+    /// than appear at once (when the user just switched something on).
+    pub fade_in: bool,
+    /// Draw at most this often (on battery).
+    pub gap: Option<Duration>,
 }
 
 /// A CPU-readable copy of a small mip level, for measuring lightness.
@@ -62,13 +83,50 @@ struct Probe {
     h: u32,
 }
 
+/// The photo rating of the window, one byte per 4x4 block (photos.rs).
+struct PhotoPass {
+    rtv: ID3D11RenderTargetView,
+    tex: ID3D11Texture2D,
+    staging: ID3D11Texture2D,
+    w: u32,
+    h: u32,
+    /// A copy to the staging texture is on its way.
+    waiting: bool,
+    last: Instant,
+    /// The current wait between looks, and a fingerprint of the last rating.
+    every: Duration,
+    seen: u64,
+}
+
+/// Darkening strength moving from one value to another.
+#[derive(Clone, Copy)]
+struct Fade {
+    from: f32,
+    to: f32,
+    start: Instant,
+    ms: f32,
+}
+
+impl Fade {
+    fn value(&self) -> f32 {
+        let t = if self.ms <= 0.0 { 1.0 } else { (self.start.elapsed().as_secs_f32() * 1000.0 / self.ms).clamp(0.0, 1.0) };
+        // Eases in and out.
+        self.from + (self.to - self.from) * t * t * (3.0 - 2.0 * t)
+    }
+
+    fn done(&self) -> bool {
+        self.ms <= 0.0 || self.start.elapsed().as_secs_f32() * 1000.0 >= self.ms
+    }
+}
+
 pub struct Layer {
     pub target: HWND,
     /// Lower-case exe name of the program this window belongs to.
     pub exe: String,
     pub overlay: HWND,
-    pool: Direct3D11CaptureFramePool,
-    session: GraphicsCaptureSession,
+    /// Windows.Graphics.Capture; None when the layer copies the screen
+    /// instead (see desk.rs).
+    capture: Option<(Direct3D11CaptureFramePool, GraphicsCaptureSession)>,
     swap: IDXGISwapChain1,
     /// Kept alive while the layer lives (see-through layers only).
     _comp: Option<(IDCompositionTarget, IDCompositionVisual)>,
@@ -83,6 +141,16 @@ pub struct Layer {
     pub protect: Vec<RECT>,
     /// Areas the user drew, as distances from the window's edges.
     pub manual: Vec<crate::config::Area>,
+    /// Photos and videos found in the window, kept in real colours.
+    pub photos: Vec<RECT>,
+    photo: Option<PhotoPass>,
+    find_photos: bool,
+    fade: Fade,
+    fade_in: bool,
+    /// Drawing waits for `gap` to pass (on battery).
+    gap: Option<Duration>,
+    last_render: Instant,
+    pending: bool,
     last_rect: RECT,
     shown: bool,
     pub born: Instant,
@@ -94,22 +162,27 @@ pub struct Layer {
 }
 
 impl Layer {
-    pub fn new(gpu: &Gpu, target: HWND, look: &Look) -> Result<Layer> {
+    pub fn new(gpu: &Gpu, target: HWND, look: &Look, copy_screen: bool) -> Result<Layer> {
         unsafe {
-            let interop = factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
-            let item: GraphicsCaptureItem = interop.CreateForWindow(target)?;
-            let start = item.Size()?;
-            let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
-                &gpu.rt_device,
-                DirectXPixelFormat::B8G8R8A8UIntNormalized,
-                2,
-                start,
-            )?;
-            let session = pool.CreateCaptureSession(&item)?;
-            let _ = session.SetIsCursorCaptureEnabled(false);
-            let _ = session.SetIsBorderRequired(false);
-
             let r = frame_rect(target);
+            let (capture, start) = if copy_screen {
+                (None, SizeInt32 { Width: width(&r), Height: height(&r) })
+            } else {
+                let interop = factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
+                let item: GraphicsCaptureItem = interop.CreateForWindow(target)?;
+                let start = item.Size()?;
+                let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
+                    &gpu.rt_device,
+                    DirectXPixelFormat::B8G8R8A8UIntNormalized,
+                    2,
+                    start,
+                )?;
+                let session = pool.CreateCaptureSession(&item)?;
+                let _ = session.SetIsCursorCaptureEnabled(false);
+                let _ = session.SetIsBorderRequired(false);
+                (Some((pool, session)), start)
+            };
+
             let hinst = GetModuleHandleW(None)?;
             let see_through = gpu.dcomp.is_some();
             let mut ex = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
@@ -173,8 +246,7 @@ impl Layer {
                 target,
                 exe: String::new(),
                 overlay,
-                pool,
-                session,
+                capture,
                 swap,
                 _comp: comp,
                 rtv: None,
@@ -191,10 +263,20 @@ impl Layer {
                     amount: 1.0,
                     fringe: if std::env::var_os("DEONYX_NO_FRINGE").is_some() { 0.0 } else { 1.0 },
                     holes: if see_through { 1.0 } else { 0.0 },
+                    strength: look.strength,
+                    boost: look.boost,
                     ..Default::default()
                 },
                 protect: Vec::new(),
                 manual: Vec::new(),
+                photos: Vec::new(),
+                photo: None,
+                find_photos: look.photos,
+                fade: Fade { from: look.strength, to: look.strength, start: Instant::now(), ms: 0.0 },
+                fade_in: look.fade_in,
+                gap: None,
+                last_render: Instant::now(),
+                pending: false,
                 last_rect: RECT::default(),
                 shown: false,
                 born: Instant::now(),
@@ -204,21 +286,52 @@ impl Layer {
                 work_ms: 0.0,
             };
             layer.params.split = if look.split { 1.0 } else { 0.0 };
+            // The screen copy must never see our own layers.
+            layer.hide_from_capture(look.hidden || copy_screen);
+            layer.set_gap(look.gap);
             layer.make_targets(gpu)?;
-            layer.session.StartCapture()?;
+            if let Some((_, session)) = &layer.capture {
+                session.StartCapture()?;
+            }
             Ok(layer)
         }
     }
 
     pub fn on_frame_arrived(&self, ev: HANDLE) -> Result<()> {
+        let Some((pool, _)) = &self.capture else { return Ok(()) };
         let evv = ev.0 as isize;
-        self.pool.FrameArrived(&windows::Foundation::TypedEventHandler::new(move |_, _| {
+        pool.FrameArrived(&windows::Foundation::TypedEventHandler::new(move |_, _| {
             unsafe {
                 let _ = windows::Win32::System::Threading::SetEvent(HANDLE(evv as *mut c_void));
             }
             Ok(())
         }))?;
         Ok(())
+    }
+
+    /// Screen sharing and screenshots see the real window, not the layer.
+    pub fn hide_from_capture(&self, on: bool) {
+        let to = if on { WDA_EXCLUDEFROMCAPTURE } else { WDA_NONE };
+        unsafe {
+            let _ = SetWindowDisplayAffinity(self.overlay, to);
+        }
+    }
+
+    /// Draw at most every `gap` (on battery). Newer Windows can also capture
+    /// less often, which saves more.
+    pub fn set_gap(&mut self, gap: Option<Duration>) {
+        self.gap = gap;
+        if let Some((_, session)) = &self.capture {
+            let ticks = gap.map_or(0, |g| g.as_nanos() as i64 / 100);
+            let _ = session.SetMinUpdateInterval(TimeSpan { Duration: ticks });
+        }
+    }
+
+    pub fn set_find_photos(&mut self, on: bool) {
+        self.find_photos = on;
+        if !on {
+            self.photos.clear();
+        }
     }
 
     fn make_targets(&mut self, gpu: &Gpu) -> Result<()> {
@@ -271,8 +384,67 @@ impl Layer {
             let mut st = None;
             gpu.device.CreateTexture2D(&sd, None, Some(&mut st))?;
             self.probe = st.map(|t| Probe { tex: t, level: lvl, w: pw, h: ph });
+
+            // The photo rating, a quarter of the size each way.
+            let (mw, mh) = (w.div_ceil(photos::BLOCK as u32), h.div_ceil(photos::BLOCK as u32));
+            let md = D3D11_TEXTURE2D_DESC {
+                Width: mw,
+                Height: mh,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_R8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32,
+                ..Default::default()
+            };
+            let mut mt = None;
+            gpu.device.CreateTexture2D(&md, None, Some(&mut mt))?;
+            let mt = mt.unwrap();
+            let mut mrtv = None;
+            gpu.device.CreateRenderTargetView(&mt, None, Some(&mut mrtv))?;
+            let staging_desc = D3D11_TEXTURE2D_DESC {
+                BindFlags: 0,
+                Usage: D3D11_USAGE_STAGING,
+                CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+                ..md
+            };
+            let mut ms = None;
+            gpu.device.CreateTexture2D(&staging_desc, None, Some(&mut ms))?;
+            self.photo = Some(PhotoPass {
+                rtv: mrtv.unwrap(),
+                tex: mt,
+                staging: ms.unwrap(),
+                w: mw,
+                h: mh,
+                waiting: false,
+                last: Instant::now() - PHOTO_EVERY,
+                every: PHOTO_EVERY,
+                seen: 0,
+            });
+            self.photos.clear();
         }
         Ok(())
+    }
+
+    /// Darkening strength right now.
+    pub fn strength(&self) -> f32 {
+        self.fade.value()
+    }
+
+    /// Fades to `to` (0 = real colours, 1 = dark) over `ms` milliseconds.
+    pub fn fade_to(&mut self, to: f32, ms: f32) {
+        if !self.shown {
+            // Nothing on screen yet: start there.
+            self.fade = Fade { from: to, to, start: Instant::now(), ms: 0.0 };
+            self.fade_in = false;
+            return;
+        }
+        self.fade = Fade { from: self.strength(), to, start: Instant::now(), ms };
+    }
+
+    pub fn fading(&self) -> bool {
+        !self.fade.done()
     }
 
     /// Keeps the overlay over the target and directly above it in z-order.
@@ -284,6 +456,7 @@ impl Layer {
             }
             let hide = !enabled
                 || !self.shown
+                || (self.strength() <= 0.0 && !self.fading())
                 || IsIconic(self.target).as_bool()
                 || !IsWindowVisible(self.target).as_bool()
                 || crate::win::is_cloaked(self.target);
@@ -315,8 +488,9 @@ impl Layer {
 
     /// Takes the newest captured frame, if any, and draws it darkened.
     pub fn poll(&mut self, gpu: &Gpu, enabled: bool) -> Result<bool> {
+        let Some((pool, _)) = &self.capture else { return Ok(false) };
         let mut latest = None;
-        while let Ok(f) = self.pool.TryGetNextFrame() {
+        while let Ok(f) = pool.TryGetNextFrame() {
             latest = Some(f);
         }
         let Some(frame) = latest else { return Ok(false) };
@@ -325,7 +499,7 @@ impl Layer {
         let want = (cs.Width.max(1) as u32, cs.Height.max(1) as u32);
         if want != self.size {
             self.size = want;
-            self.pool.Recreate(
+            pool.Recreate(
                 &gpu.rt_device,
                 DirectXPixelFormat::B8G8R8A8UIntNormalized,
                 2,
@@ -351,13 +525,53 @@ impl Layer {
             gpu.ctx.GenerateMips(srv);
         }
         let _ = frame.Close();
+        self.after_copy(gpu, enabled, t)
+    }
+
+    /// Like poll(), for a layer that copies the screen: takes its part of
+    /// the screen when that changed or the window moved.
+    pub fn poll_screen(&mut self, gpu: &Gpu, desk: &Desktop, changed: &[RECT], enabled: bool) -> Result<bool> {
+        let r = frame_rect(self.target);
+        let want = (width(&r).max(1) as u32, height(&r).max(1) as u32);
+        let touched = changed.iter().any(|c| c.left < r.right && c.right > r.left && c.top < r.bottom && c.bottom > r.top);
+        if want == self.size && r == self.last_rect && self.shown && !touched {
+            return Ok(false);
+        }
+        let t = Instant::now();
+        if want != self.size {
+            self.size = want;
+            self.make_targets(gpu)?;
+        }
+        let (copy, srv) = self.copy.as_ref().unwrap();
+        if !desk.copy(gpu, copy, r) {
+            return Ok(false);
+        }
+        unsafe { gpu.ctx.GenerateMips(srv) };
+        self.after_copy(gpu, enabled, t)
+    }
+
+    /// A new picture of the window is in `copy`: measure it, look for
+    /// photos, draw.
+    fn after_copy(&mut self, gpu: &Gpu, enabled: bool, t: Instant) -> Result<bool> {
         if !self.shown || self.last_probe.elapsed().as_millis() >= 500 {
             self.measure(gpu);
         }
-        self.render(gpu)?;
+        self.rate_photos(gpu);
+        if self.shown && self.gap.is_some_and(|g| self.last_render.elapsed() < g) {
+            // On battery: draw a little later, with whatever is newest then.
+            self.pending = true;
+        } else {
+            self.render(gpu)?;
+        }
         if !self.shown {
             self.shown = true;
             self.first_frame_ms = Some(self.born.elapsed().as_secs_f64() * 1000.0);
+            if self.fade_in {
+                // Appear with the real colours, then darken.
+                let to = self.fade.to;
+                self.fade = Fade { from: 0.0, to, start: Instant::now(), ms: crate::engine::FADE_MS };
+                self.fade_in = false;
+            }
             self.sync(enabled);
         }
         self.frames += 1;
@@ -365,10 +579,91 @@ impl Layer {
         Ok(true)
     }
 
+    /// Between frames: draws again while fading, when a delayed frame is
+    /// due, or when the photo search found something new. True if it drew.
+    pub fn tick(&mut self, gpu: &Gpu) -> bool {
+        if !self.shown {
+            return false;
+        }
+        let photos_changed = self.read_photos(gpu);
+        let due = self.pending && self.gap.is_none_or(|g| self.last_render.elapsed() >= g);
+        if self.fading() || due || photos_changed {
+            let _ = self.render(gpu);
+            return true;
+        }
+        false
+    }
+
+    /// Rates the window's blocks for looking like a photo, now and then.
+    fn rate_photos(&mut self, gpu: &Gpu) {
+        if !self.find_photos || self.params.amount <= 0.0 {
+            return;
+        }
+        let Some(p) = self.photo.as_mut() else { return };
+        if p.waiting || p.last.elapsed() < p.every {
+            return;
+        }
+        let Some((_, srv)) = &self.copy else { return };
+        unsafe {
+            gpu.ctx.OMSetRenderTargets(Some(&[Some(p.rtv.clone())]), None);
+            let vp = D3D11_VIEWPORT { Width: p.w as f32, Height: p.h as f32, MaxDepth: 1.0, ..Default::default() };
+            gpu.ctx.RSSetViewports(Some(&[vp]));
+            gpu.ctx.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            gpu.ctx.VSSetShader(&gpu.vs, None);
+            gpu.ctx.PSSetShader(&gpu.photo, None);
+            gpu.ctx.PSSetShaderResources(0, Some(&[Some(srv.clone())]));
+            gpu.ctx.Draw(3, 0);
+            gpu.ctx.CopyResource(&p.staging, &p.tex);
+        }
+        p.waiting = true;
+        p.last = Instant::now();
+    }
+
+    /// Picks up the photo rating once the GPU has it, without waiting for
+    /// it. True if the photos found changed.
+    fn read_photos(&mut self, gpu: &Gpu) -> bool {
+        let Some(p) = self.photo.as_mut() else { return false };
+        if !p.waiting {
+            return false;
+        }
+        let mut m = D3D11_MAPPED_SUBRESOURCE::default();
+        let mapped = unsafe { gpu.ctx.Map(&p.staging, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT.0 as u32, Some(&mut m)) };
+        if mapped.is_err() {
+            return false;
+        }
+        let cells = unsafe { std::slice::from_raw_parts(m.pData as *const u8, (m.RowPitch * p.h) as usize) };
+        // The same rating as last time (the usual case once a window sits
+        // still): nothing to work out, and look less often.
+        let seen = cells.iter().fold(0xcbf29ce484222325u64, |h, b| (h ^ *b as u64).wrapping_mul(0x100000001b3));
+        if seen == p.seen {
+            unsafe { gpu.ctx.Unmap(&p.staging, 0) };
+            p.waiting = false;
+            p.every = (p.every * 2).min(PHOTO_CALM);
+            return false;
+        }
+        p.seen = seen;
+        p.every = PHOTO_EVERY;
+        let found = photos::find(cells, p.w as usize, p.h as usize, m.RowPitch as usize);
+        unsafe { gpu.ctx.Unmap(&p.staging, 0) };
+        p.waiting = false;
+        if !self.find_photos || found == self.photos {
+            return false;
+        }
+        self.photos = found;
+        true
+    }
+
     fn render(&mut self, gpu: &Gpu) -> Result<()> {
         let (w, h) = (self.size.0 as i32, self.size.1 as i32);
         let drawn = self.manual.iter().map(|a| RECT { left: a.left, top: a.top, right: w - a.right, bottom: h - a.bottom });
-        let all: Vec<RECT> = self.protect.iter().copied().chain(drawn).filter(|r| r.right > r.left && r.bottom > r.top).collect();
+        let all: Vec<RECT> = self
+            .protect
+            .iter()
+            .copied()
+            .chain(drawn)
+            .chain(self.photos.iter().copied())
+            .filter(|r| r.right > r.left && r.bottom > r.top)
+            .collect();
         let n = all.len().min(MAX_RECTS);
         self.params.count = n as u32;
         for (i, r) in all.iter().take(n).enumerate() {
@@ -376,6 +671,7 @@ impl Layer {
         }
         let mut p = self.params;
         p.split = if self.params.split > 0.0 { self.size.0 as f32 / 2.0 } else { 0.0 };
+        p.strength = self.strength();
         unsafe {
             gpu.ctx.UpdateSubresource(&gpu.cb, 0, None, &p as *const Params as *const c_void, 0, 0);
             gpu.ctx.OMSetRenderTargets(Some(&[self.rtv.clone()]), None);
@@ -395,6 +691,8 @@ impl Layer {
             gpu.ctx.Draw(3, 0);
             self.swap.Present(0, DXGI_PRESENT(0)).ok()?;
         }
+        self.last_render = Instant::now();
+        self.pending = false;
         Ok(())
     }
 
@@ -417,7 +715,8 @@ impl Layer {
                 let row = std::slice::from_raw_parts((m.pData as *const u8).add((y * m.RowPitch) as usize), (p.w * 4) as usize);
                 for x in 0..p.w {
                     let (fx, fy) = ((x << p.level) as i32, (y << p.level) as i32);
-                    if self.protect.iter().any(|r| fx >= r.left && fx < r.right && fy >= r.top && fy < r.bottom) {
+                    let inside = |r: &RECT| fx >= r.left && fx < r.right && fy >= r.top && fy < r.bottom;
+                    if self.protect.iter().any(inside) || self.photos.iter().any(inside) {
                         continue;
                     }
                     let px = &row[(x * 4) as usize..(x * 4 + 4) as usize];
@@ -465,8 +764,10 @@ impl Layer {
 
 impl Drop for Layer {
     fn drop(&mut self) {
-        let _ = self.session.Close();
-        let _ = self.pool.Close();
+        if let Some((pool, session)) = &self.capture {
+            let _ = session.Close();
+            let _ = pool.Close();
+        }
         unsafe {
             let _ = DestroyWindow(self.overlay);
         }

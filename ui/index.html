@@ -12,6 +12,17 @@
       <span id="update-text"></span>
       <button class="primary" id="update-now" data-i18n="update.install">Update now</button>
     </div>
+    <div id="pause-bar" class="banner" hidden>
+      <span id="pause-text"></span>
+      <button class="primary" id="resume" data-i18n="pause.resume">Resume</button>
+    </div>
+    <div id="crash-bar" class="banner" hidden>
+      <span data-i18n="crash.text">Deonyx hit a problem and got back up by itself.</span>
+      <span class="actions">
+        <button class="quiet" id="crash-dismiss" data-i18n="crash.dismiss">Dismiss</button>
+        <button class="primary" id="crash-copy" data-i18n="crash.copy">Copy report</button>
+      </span>
+    </div>
 
     <header class="top">
       <img class="logo" src="logo.svg" alt="">
@@ -73,6 +84,7 @@
             <button data-style="gray" data-i18n="look.gray">Gray</button>
             <button data-style="black" data-i18n="look.black">Black</button>
             <button data-style="soft" data-i18n="look.soft">Soft</button>
+            <button data-style="paper" data-i18n="look.paper">Paper</button>
           </div>
         </div>
         <div class="row">
@@ -85,6 +97,28 @@
             <span id="warm-val"></span>
           </span>
         </div>
+        <label class="row">
+          <span>
+            <strong data-i18n="look.readable">Keep faint text readable</strong>
+            <small data-i18n="look.readable.hint"></small>
+          </span>
+          <input type="checkbox" class="switch" id="readable">
+        </label>
+        <div id="screens" class="rows"></div>
+        <label class="row">
+          <span>
+            <strong data-i18n="look.share">Real colors when sharing the screen</strong>
+            <small data-i18n="look.share.hint"></small>
+          </span>
+          <input type="checkbox" class="switch" id="share">
+        </label>
+        <label class="row" id="share-auto-row">
+          <span>
+            <strong data-i18n="look.share.auto">Real colors during meetings and streams</strong>
+            <small data-i18n="look.share.auto.hint"></small>
+          </span>
+          <input type="checkbox" class="switch" id="share-auto">
+        </label>
       </div>
     </section>
 
@@ -100,6 +134,7 @@
             <option value="always" data-i18n="when.always">Always</option>
             <option value="windows" data-i18n="when.windows">When Windows is in dark mode</option>
             <option value="times" data-i18n="when.times">Between set hours</option>
+            <option value="sun" data-i18n="when.sun">From sunset to sunrise</option>
           </select>
         </div>
         <div class="row" id="times-row" hidden>
@@ -110,7 +145,53 @@
             <input type="time" id="to">
           </span>
         </div>
+        <div class="row column" id="sun-row" hidden>
+          <div class="place">
+            <input type="search" id="place" autocomplete="off" spellcheck="false" data-i18n-ph="sun.search">
+            <div id="place-list" class="place-list" hidden></div>
+          </div>
+          <small id="sun-times"></small>
+        </div>
+        <div class="row">
+          <span>
+            <strong data-i18n="battery.title">On battery</strong>
+            <small data-i18n="battery.hint"></small>
+          </span>
+          <select id="battery">
+            <option value="keep" data-i18n="battery.keep">Keep going</option>
+            <option value="slow" data-i18n="battery.slow">Save power</option>
+            <option value="pause" data-i18n="battery.pause">Pause</option>
+          </select>
+        </div>
       </div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <div>
+          <h2 data-i18n="game.title">Pause while these run</h2>
+          <p class="hint" data-i18n="game.hint"></p>
+        </div>
+        <button id="add-pause" data-i18n="game.add">Add a program</button>
+      </div>
+      <div id="pause-picker" class="picker" hidden></div>
+      <div id="pause-apps" class="apps"></div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <div>
+          <h2 data-i18n="profiles.title">Profiles</h2>
+          <p class="hint" data-i18n="profiles.hint"></p>
+        </div>
+        <button id="profile-new" data-i18n="profiles.save">Save as a profile</button>
+      </div>
+      <form id="profile-form" class="profile-form" hidden>
+        <input type="text" id="profile-name" maxlength="40" autocomplete="off" spellcheck="false" data-i18n-ph="profiles.name">
+        <button class="quiet" type="button" id="profile-cancel" data-i18n="tools.cancel">Cancel</button>
+        <button class="primary" type="submit" data-i18n="profiles.ok">Save</button>
+      </form>
+      <div id="profiles" class="chips"></div>
     </section>
 
     <section>
@@ -126,17 +207,26 @@
         <div id="inspect-result" class="result" hidden></div>
         <div class="row">
           <span>
-            <strong data-i18n="tools.front">Switch the app in front</strong>
-            <small data-i18n="tools.front.hint"></small>
+            <strong data-i18n="tools.part">Keep a part in real colors</strong>
+            <small id="part-hint" data-i18n="tools.part.hint"></small>
           </span>
-          <kbd>Ctrl+Alt+F</kbd>
+          <button id="pick-part" data-i18n="tools.part.pick">Pick a part</button>
+        </div>
+        <div id="keys" class="rows"></div>
+        <div class="row">
+          <span>
+            <strong data-i18n="tools.cli">Command line</strong>
+            <small data-i18n="tools.cli.hint"></small>
+            <code class="cli">deonyx --toggle · --pause 30 · --profile Night · --window · --app SketchUp.exe on|off · --status</code>
+          </span>
+          <button class="quiet" id="copy-cli" data-i18n="tools.copy">Copy</button>
         </div>
         <div class="row">
           <span>
-            <strong data-i18n="tools.all">Turn darkening on and off</strong>
-            <small data-i18n="tools.all.hint"></small>
+            <strong data-i18n="tools.diag">Diagnostics</strong>
+            <small data-i18n="tools.diag.hint"></small>
           </span>
-          <kbd>Ctrl+Alt+D</kbd>
+          <button id="copy-diag" data-i18n="tools.diag.copy">Copy diagnostics</button>
         </div>
       </div>
     </section>
@@ -187,11 +277,47 @@
             <input type="checkbox" class="switch" id="updates">
           </span>
         </div>
+        <div class="row">
+          <span>
+            <strong data-i18n="general.file">Settings file</strong>
+            <small data-i18n="general.file.hint"></small>
+          </span>
+          <span class="actions">
+            <button class="quiet" id="import" data-i18n="general.import">Import…</button>
+            <button id="export" data-i18n="general.export">Export…</button>
+          </span>
+        </div>
       </div>
     </section>
 
     <footer id="footer"></footer>
   </main>
+
+  <div id="welcome" class="overlay" hidden>
+    <div class="sheet">
+      <img class="logo" src="logo.svg" alt="">
+      <div class="steps" id="welcome-steps"></div>
+      <div class="sheet-foot">
+        <span class="dots" id="welcome-dots"></span>
+        <span class="actions">
+          <button class="quiet" id="welcome-skip" data-i18n="welcome.skip">Skip</button>
+          <button class="primary" id="welcome-next" data-i18n="welcome.next">Next</button>
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <div id="news" class="overlay" hidden>
+    <div class="sheet">
+      <h2 id="news-title"></h2>
+      <ul id="news-list"></ul>
+      <div class="sheet-foot">
+        <span></span>
+        <button class="primary" id="news-ok" data-i18n="news.ok">Nice</button>
+      </div>
+    </div>
+  </div>
+
   <div id="toast" hidden></div>
   <script src="i18n.js"></script>
   <script src="lang/de.js"></script>
@@ -205,6 +331,8 @@
   <script src="lang/ja.js"></script>
   <script src="lang/ko.js"></script>
   <script src="lang/zh.js"></script>
+  <script src="cities.js"></script>
+  <script src="news.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

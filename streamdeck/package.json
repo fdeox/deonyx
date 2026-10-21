@@ -1,0 +1,15 @@
+{
+  "name": "deonyx-streamdeck",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Deonyx for Stream Deck: switch darkening, pause, apps and profiles from a key.",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "devDependencies": {
+    "@elgato/streamdeck": "^3.0.3",
+    "esbuild": "^0.28.2"
+  }
+}

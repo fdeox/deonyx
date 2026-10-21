@@ -1,0 +1,4 @@
+node_modules/
+com.fdeox.deonyx.sdPlugin/bin/
+*.streamDeckPlugin
+logs/

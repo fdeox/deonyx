@@ -52,6 +52,8 @@ struct Tracked {
 #[derive(Clone, Default)]
 struct Shared {
     want: Vec<isize>,
+    /// More words, from the app presets (presets.rs).
+    words: Vec<String>,
     found: HashMap<isize, Vec<RECT>>,
     /// Windows that just drew something new.
     poked: HashSet<isize>,
@@ -71,7 +73,7 @@ impl Finder {
         let (s, d) = (shared.clone(), dirty.clone());
         std::thread::spawn(move || {
             if let Err(e) = run(s, d) {
-                eprintln!("3D view finder stopped: {e}");
+                crate::note!("3D view finder stopped: {e}");
             }
         });
         Finder { shared, dirty }
@@ -79,6 +81,11 @@ impl Finder {
 
     pub fn watch(&self, windows: Vec<isize>) {
         self.shared.0.lock().unwrap().want = windows;
+    }
+
+    /// Words of the presets, on top of VIEW_WORDS.
+    pub fn set_words(&self, words: Vec<String>) {
+        self.shared.0.lock().unwrap().words = words;
     }
 
     /// The window drew a new frame: check its 3D view soon.
@@ -115,13 +122,13 @@ fn run(shared: Guarded, dirty: Arc<AtomicBool>) -> Result<()> {
         loop {
             // Wait for a window to draw something new, or look at all of them
             // every 700 ms anyway.
-            let (want, poked) = {
+            let (want, poked, words) = {
                 let (m, cv) = &*shared;
                 let mut s = m.lock().unwrap();
                 if s.poked.is_empty() {
                     s = cv.wait_timeout(s, Duration::from_millis(700)).unwrap().0;
                 }
-                (s.want.clone(), std::mem::take(&mut s.poked))
+                (s.want.clone(), std::mem::take(&mut s.poked), s.words.clone())
             };
             tracked.retain(|h, _| want.contains(h));
             let list: Vec<isize> = if poked.is_empty() { want } else { want.into_iter().filter(|h| poked.contains(h)).collect() };
@@ -132,10 +139,10 @@ fn run(shared: Guarded, dirty: Arc<AtomicBool>) -> Result<()> {
                 let full = tracked.get(&h).is_none_or(|t| t.size != size || t.last_full.elapsed() >= FULL_EVERY);
                 let rects = if full {
                     let t = Instant::now();
-                    let found = scan(&uia, &cache, &all, hwnd, frame).unwrap_or_default();
+                    let found = scan(&uia, &cache, &all, hwnd, frame, &words).unwrap_or_default();
                     let rects: Vec<RECT> = found.iter().map(|(r, _)| *r).collect();
                     if reported.insert(h) {
-                        println!(
+                        crate::note!(
                             "3D view scan {:.0} ms, protected areas {}: {:?}",
                             t.elapsed().as_secs_f64() * 1000.0,
                             rects.len(),
@@ -193,7 +200,7 @@ fn relative(r: RECT, frame: RECT) -> Option<RECT> {
     Some(RECT { left: r.left - frame.left, top: r.top - frame.top, right: r.right - frame.left, bottom: r.bottom - frame.top })
 }
 
-fn is_view(class: &str, id: &str) -> bool {
+fn is_view(class: &str, id: &str, words: &[String]) -> bool {
     let c = class.to_ascii_lowercase();
     let i = id.to_ascii_lowercase();
     let i = i.rsplit('.').next().unwrap_or("");
@@ -201,7 +208,7 @@ fn is_view(class: &str, id: &str) -> bool {
     if c.contains("scroll") || i.contains("scroll") {
         return false;
     }
-    VIEW_WORDS.iter().any(|w| c.contains(w) || i.contains(w))
+    VIEW_WORDS.iter().any(|w| c.contains(w) || i.contains(w)) || words.iter().any(|w| c.contains(w.as_str()) || i.contains(w.as_str()))
 }
 
 fn scan(
@@ -210,6 +217,7 @@ fn scan(
     all: &IUIAutomationCondition,
     h: HWND,
     frame: RECT,
+    words: &[String],
 ) -> Result<Vec<(RECT, IUIAutomationElement)>> {
     let frame_area = (width(&frame) as i64 * height(&frame) as i64).max(1);
     let mut out: Vec<(RECT, IUIAutomationElement)> = Vec::new();
@@ -226,7 +234,7 @@ fn scan(
             let kind = e.CachedControlType().unwrap_or_default();
             let Some(r) = relative(e.CachedBoundingRectangle().unwrap_or_default(), frame) else { continue };
             let share = (width(&r) as i64 * height(&r) as i64) as f64 / frame_area as f64;
-            let keep = (is_view(&class, &id) && share > 0.08 && share < 0.97)
+            let keep = (is_view(&class, &id, words) && share > 0.08 && share < 0.97)
                 || (kind == UIA_ImageControlTypeId && share > 0.01);
             if keep {
                 if std::env::var_os("DEONYX_DEBUG").is_some() {

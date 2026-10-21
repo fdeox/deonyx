@@ -1,0 +1,38 @@
+/* The tray window: small, quick, gone when it loses the focus. */
+body.flyout {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100vh;
+  padding: 16px;
+  overflow: hidden;
+  border: 1px solid var(--line-2);
+}
+.flyout header { display: flex; align-items: center; gap: 12px; }
+.flyout .logo { width: 36px; height: 36px; }
+.flyout .title { flex: 1; min-width: 0; }
+.flyout .title strong { display: block; font-size: 15px; }
+.flyout .title small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flyout .wide { width: 100%; }
+.flyout .seg { display: flex; }
+.flyout .seg button { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flyout #profiles { flex-wrap: wrap; }
+.flyout .list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.flyout .item { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; }
+.flyout .item:hover { background: var(--panel-2); }
+.flyout .item .icon { width: 28px; height: 28px; border-radius: 7px; }
+.flyout .item .icon img { width: 20px; height: 20px; }
+.flyout .item span.name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flyout .list .empty { border: none; padding: 18px 10px; font-size: 13px; }
+.flyout footer { margin: 0; display: flex; justify-content: flex-end; }

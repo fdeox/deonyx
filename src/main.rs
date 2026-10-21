@@ -12,22 +12,32 @@
 
 mod admin;
 mod apps;
+mod cli;
 mod config;
+mod desk;
 mod engine;
 mod gpu;
 mod helper;
+mod jumplist;
+mod keys;
 mod layer;
+mod log;
+mod photos;
+mod presets;
 mod protect;
+mod screens;
 mod select;
+mod sun;
 mod win;
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
 use tauri::image::Image;
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, RunEvent, Theme, WebviewUrl, WebviewWindowBuilder, Wry};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, Theme, WebviewUrl, WebviewWindowBuilder, Wry};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_updater::UpdaterExt;
@@ -35,19 +45,13 @@ use tauri_plugin_updater::UpdaterExt;
 use config::{AppRule, Config, Excluded};
 use engine::{Cmd, Engine, Request, Role, Status};
 
-struct Tray {
-    toggle: CheckMenuItem<Wry>,
-    settings: MenuItem<Wry>,
-    quit: MenuItem<Wry>,
-}
-
 struct State {
     cfg: Mutex<Config>,
     status: Mutex<Status>,
     engine: Engine,
-    tray: Mutex<Option<Tray>>,
     /// A newer version, once found.
     update: Mutex<Option<String>>,
+    presets: Mutex<Vec<presets::Preset>>,
 }
 
 #[derive(Serialize)]
@@ -60,25 +64,29 @@ struct Snapshot {
     lang: &'static str,
     /// What "Same as Windows" means here.
     system_lang: &'static str,
+    presets: Vec<presets::Preset>,
+    /// The last crash's report, until dismissed.
+    crash: Option<String>,
 }
 
-/// Tray texts, in the settings' language: the switch, Settings, Quit, and
-/// the tooltip when on and off.
-fn words(lang: &str) -> [&'static str; 5] {
+/// Tray texts, in the settings' language: the switch, Settings, Quit, the
+/// tooltip when on and off, pause for an hour, resume, the app list and the
+/// profiles.
+fn words(lang: &str) -> [&'static str; 9] {
     match lang {
-        "tr" => ["Uygulamaları karart", "Ayarlar", "Deonyx'ten çık", "Deonyx: açık", "Deonyx: kapalı"],
-        "de" => ["Apps abdunkeln", "Einstellungen", "Deonyx beenden", "Deonyx: an", "Deonyx: aus"],
-        "fr" => ["Assombrir les applis", "Paramètres", "Quitter Deonyx", "Deonyx : activé", "Deonyx : désactivé"],
-        "es" => ["Oscurecer apps", "Ajustes", "Salir de Deonyx", "Deonyx: activado", "Deonyx: desactivado"],
-        "it" => ["Scurisci le app", "Impostazioni", "Esci da Deonyx", "Deonyx: attivo", "Deonyx: disattivato"],
-        "pt" => ["Escurecer apps", "Configurações", "Sair do Deonyx", "Deonyx: ligado", "Deonyx: desligado"],
-        "ru" => ["Затемнять приложения", "Настройки", "Выйти из Deonyx", "Deonyx: вкл.", "Deonyx: выкл."],
-        "uk" => ["Затемнювати застосунки", "Налаштування", "Вийти з Deonyx", "Deonyx: увімк.", "Deonyx: вимк."],
-        "nl" => ["Apps donker maken", "Instellingen", "Deonyx afsluiten", "Deonyx: aan", "Deonyx: uit"],
-        "ja" => ["アプリを暗くする", "設定", "Deonyx を終了", "Deonyx: オン", "Deonyx: オフ"],
-        "ko" => ["앱 어둡게 하기", "설정", "Deonyx 종료", "Deonyx: 켜짐", "Deonyx: 꺼짐"],
-        "zh" => ["调暗应用", "设置", "退出 Deonyx", "Deonyx：开", "Deonyx：关"],
-        _ => ["Darken apps", "Settings", "Quit Deonyx", "Deonyx: on", "Deonyx: off"],
+        "tr" => ["Uygulamaları karart", "Ayarlar", "Deonyx'ten çık", "Deonyx: açık", "Deonyx: kapalı", "1 saat duraklat", "Devam et", "Uygulamalar", "Profiller"],
+        "de" => ["Apps abdunkeln", "Einstellungen", "Deonyx beenden", "Deonyx: an", "Deonyx: aus", "1 Stunde pausieren", "Fortsetzen", "Apps", "Profile"],
+        "fr" => ["Assombrir les applis", "Paramètres", "Quitter Deonyx", "Deonyx : activé", "Deonyx : désactivé", "Pause d'une heure", "Reprendre", "Applis", "Profils"],
+        "es" => ["Oscurecer apps", "Ajustes", "Salir de Deonyx", "Deonyx: activado", "Deonyx: desactivado", "Pausar 1 hora", "Reanudar", "Apps", "Perfiles"],
+        "it" => ["Scurisci le app", "Impostazioni", "Esci da Deonyx", "Deonyx: attivo", "Deonyx: disattivato", "Pausa di 1 ora", "Riprendi", "App", "Profili"],
+        "pt" => ["Escurecer apps", "Configurações", "Sair do Deonyx", "Deonyx: ligado", "Deonyx: desligado", "Pausar por 1 hora", "Retomar", "Apps", "Perfis"],
+        "ru" => ["Затемнять приложения", "Настройки", "Выйти из Deonyx", "Deonyx: вкл.", "Deonyx: выкл.", "Пауза на 1 час", "Продолжить", "Приложения", "Профили"],
+        "uk" => ["Затемнювати застосунки", "Налаштування", "Вийти з Deonyx", "Deonyx: увімк.", "Deonyx: вимк.", "Пауза на 1 годину", "Продовжити", "Застосунки", "Профілі"],
+        "nl" => ["Apps donker maken", "Instellingen", "Deonyx afsluiten", "Deonyx: aan", "Deonyx: uit", "1 uur pauzeren", "Hervatten", "Apps", "Profielen"],
+        "ja" => ["アプリを暗くする", "設定", "Deonyx を終了", "Deonyx: オン", "Deonyx: オフ", "1 時間一時停止", "再開", "アプリ", "プロファイル"],
+        "ko" => ["앱 어둡게 하기", "설정", "Deonyx 종료", "Deonyx: 켜짐", "Deonyx: 꺼짐", "1시간 일시 중지", "다시 시작", "앱", "프로필"],
+        "zh" => ["调暗应用", "设置", "退出 Deonyx", "Deonyx：开", "Deonyx：关", "暂停 1 小时", "继续", "应用", "配置文件"],
+        _ => ["Darken apps", "Settings", "Quit Deonyx", "Deonyx: on", "Deonyx: off", "Pause for 1 hour", "Resume", "Apps", "Profiles"],
     }
 }
 
@@ -93,12 +101,87 @@ fn get_state(s: tauri::State<State>) -> Snapshot {
         elevated: admin::elevated(),
         update: s.update.lock().unwrap().clone(),
         system_lang: win::system_language(),
+        presets: s.presets.lock().unwrap().clone(),
+        crash: log::crash_report(),
     }
 }
 
+/// Puts the jump list tasks on the Start menu shortcut and the taskbar, in
+/// that language. Test copies would replace the real one: they leave it
+/// alone, or with DEONYX_JUMPLIST_TEST try theirs under another id and take
+/// it off again.
+fn update_jump_list(lang: &'static str) {
+    let test = std::env::var_os("DEONYX_JUMPLIST_TEST").is_some();
+    if testing() && !test {
+        return;
+    }
+    let id = if testing() { "com.fdeox.deonyx.test" } else { "com.fdeox.deonyx" };
+    std::thread::spawn(move || unsafe {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        match jumplist::set(id, lang) {
+            Ok(()) if testing() => {
+                let gone = jumplist::forget(id).is_ok();
+                note!("jump list ready ({lang}), removed again: {gone}");
+            }
+            Ok(()) => {}
+            Err(e) => note!("jump list: {e}"),
+        }
+    });
+}
+
+/// Keeps the settings as they are now under a name, and uses that profile.
 #[tauri::command]
-fn set_config(app: AppHandle, config: Config) -> Result<(), String> {
-    apply(&app, config)
+fn save_profile(app: AppHandle, name: String) -> Result<(), String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("empty".into());
+    }
+    let mut c = app.state::<State>().cfg.lock().unwrap().clone();
+    let name = c.profiles.iter().find(|p| p.name.eq_ignore_ascii_case(&name)).map_or(name, |p| p.name.clone());
+    let p = c.to_profile(&name);
+    match c.profiles.iter_mut().find(|q| q.name == name) {
+        Some(q) => *q = p,
+        None => c.profiles.push(p),
+    }
+    c.profile = name;
+    apply_and_tell(&app, c);
+    Ok(())
+}
+
+#[tauri::command]
+fn use_profile(app: AppHandle, name: String) -> bool {
+    let mut c = app.state::<State>().cfg.lock().unwrap().clone();
+    let found = c.use_profile(&name);
+    if found {
+        apply_and_tell(&app, c);
+    }
+    found
+}
+
+/// Forgets a profile; the settings stay as they are.
+#[tauri::command]
+fn delete_profile(app: AppHandle, name: String) {
+    let mut c = app.state::<State>().cfg.lock().unwrap().clone();
+    c.profiles.retain(|p| p.name != name);
+    if c.profile == name {
+        c.profile.clear();
+    }
+    apply_and_tell(&app, c);
+}
+
+#[tauri::command]
+fn dismiss_crash() {
+    log::forget_crash();
+}
+
+/// From the settings or the tray window; the other one hears about it.
+#[tauri::command]
+fn set_config(app: AppHandle, window: tauri::Window, config: Config) -> Result<(), String> {
+    apply(&app, config.clone())?;
+    let other = if window.label() == "flyout" { "main" } else { "flyout" };
+    let _ = app.emit_to(other, "config", &config);
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -184,6 +267,13 @@ fn inspect(app: AppHandle, on: bool) {
     s.engine.send(if on { Cmd::Inspect } else { Cmd::StopInspect });
 }
 
+/// "Keep a part in real colours": the engine waits for a click on it.
+#[tauri::command]
+fn pick_area(app: AppHandle, on: bool) {
+    let s = app.state::<State>();
+    s.engine.send(if on { Cmd::PickArea } else { Cmd::StopInspect });
+}
+
 /// Let the user draw an area of an app's window to keep in real colours.
 #[tauri::command]
 fn draw_area(app: AppHandle, exe: String, hint: String) {
@@ -191,7 +281,162 @@ fn draw_area(app: AppHandle, exe: String, hint: String) {
 }
 
 #[tauri::command]
+fn list_screens() -> Vec<screens::Info> {
+    screens::list()
+}
+
+#[derive(Serialize)]
+struct SunTimes {
+    /// "times", "light" (the sun stays up) or "dark" (it never rises).
+    kind: &'static str,
+    rise: String,
+    set: String,
+}
+
+#[tauri::command]
+fn sun_times(lat: f64, lon: f64) -> SunTimes {
+    let hhmm = |m: u32| format!("{:02}:{:02}", m / 60, m % 60);
+    match sun::today(lat, lon) {
+        sun::Day::Times { rise, set } => SunTimes { kind: "times", rise: hhmm(rise), set: hhmm(set) },
+        sun::Day::Light => SunTimes { kind: "light", rise: String::new(), set: String::new() },
+        sun::Day::Dark => SunTimes { kind: "dark", rise: String::new(), set: String::new() },
+    }
+}
+
+/// Pauses darkening for a while (minutes), or resumes (0).
+#[tauri::command]
+fn pause(app: AppHandle, minutes: u64) {
+    let mut c = app.state::<State>().cfg.lock().unwrap().clone();
+    c.paused_until = if minutes == 0 { 0 } else { config::now_secs() + minutes * 60 };
+    apply_and_tell(&app, c);
+}
+
+/// Everything a bug report needs, as text for the clipboard.
+#[tauri::command]
+fn diagnostics(app: AppHandle) -> String {
+    let s = app.state::<State>();
+    let c = s.cfg.lock().unwrap().clone();
+    let st = s.status.lock().unwrap().clone();
+    let yes = |b: bool| if b { "yes" } else { "no" };
+    let mut out = vec![
+        format!("Deonyx {}", env!("CARGO_PKG_VERSION")),
+        format!("Windows build {} ({})", desk::windows_build(), std::env::consts::ARCH),
+        format!("Administrator: {} (setting {})", yes(admin::elevated()), yes(c.admin)),
+        format!("Capture: {}", if st.capture.is_empty() { "window" } else { &st.capture }),
+        format!("GPU: {}", gpu_name()),
+    ];
+    let screens = screens::list();
+    out.push(format!("Screens: {}", screens.iter().map(|s| s.name.clone()).collect::<Vec<_>>().join(", ")));
+    out.push(format!(
+        "Mode: {}, {} app(s), {} left alone",
+        if c.everything { "every light window" } else { "chosen apps" },
+        c.apps.len(),
+        c.exclude.len()
+    ));
+    out.push(format!("Look: {}, warm {:.0}%, schedule {}, battery {}", c.style, c.warm * 100.0, c.schedule, c.battery));
+    out.push(format!(
+        "State: {}{}{}{}",
+        if st.enabled { "on" } else { "off" },
+        if st.waiting { ", waiting for its time" } else { "" },
+        if st.paused { ", paused" } else { "" },
+        if st.battery { ", paused on battery" } else { "" }
+    ));
+    let mut running: Vec<_> = st.running.iter().map(|(e, n)| format!("{e} {n}")).collect();
+    running.sort();
+    out.push(format!("Darkening: {}", if running.is_empty() { "nothing".into() } else { running.join(", ") }));
+    out.push(format!(
+        "Hotkeys: {} / {} / {}{}",
+        c.keys.all,
+        c.keys.front,
+        c.keys.peek,
+        if st.keys_taken.is_empty() { String::new() } else { format!(" (taken: {})", st.keys_taken.join(", ")) }
+    ));
+    out.push(format!("Apps: {}", c.apps.iter().map(|a| a.exe.clone()).collect::<Vec<_>>().join(", ")));
+    out.push("Recent messages:".into());
+    out.extend(log::lines().into_iter().map(|l| format!("  {l}")));
+    if let Some(crash) = log::crash_report() {
+        out.push("Last crash:".into());
+        out.extend(crash.lines().map(|l| format!("  {l}")));
+    }
+    out.join("\n")
+}
+
+fn gpu_name() -> String {
+    use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIFactory1};
+    unsafe {
+        let Ok(f) = CreateDXGIFactory1::<IDXGIFactory1>() else { return "?".into() };
+        let Ok(a) = f.EnumAdapters1(0) else { return "?".into() };
+        let Ok(d) = a.GetDesc1() else { return "?".into() };
+        let n = d.Description.iter().position(|&c| c == 0).unwrap_or(d.Description.len());
+        String::from_utf16_lossy(&d.Description[..n])
+    }
+}
+
+/// Saves the settings to a file the user picks.
+#[tauri::command(async)]
+fn export_config(app: AppHandle) -> Result<bool, String> {
+    let c = app.state::<State>().cfg.lock().unwrap().clone();
+    let Some(path) = app.dialog().file().add_filter("Deonyx settings", &["json"]).set_file_name("Deonyx settings.json").blocking_save_file()
+    else {
+        return Ok(false);
+    };
+    let path = path.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(path, serde_json::to_string_pretty(&c).unwrap_or_default()).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+/// Takes the settings from a file the user picks. Running as administrator
+/// and starting with Windows stay as they are here: those change Windows
+/// itself and have their own switches.
+#[tauri::command(async)]
+fn import_config(app: AppHandle) -> Result<Option<Config>, String> {
+    let Some(path) = app.dialog().file().add_filter("Deonyx settings", &["json"]).blocking_pick_file() else { return Ok(None) };
+    let path = path.into_path().map_err(|e| e.to_string())?;
+    let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let mut c: Config = serde_json::from_str(&text).map_err(|_| "not_settings".to_string())?;
+    let now = app.state::<State>().cfg.lock().unwrap().clone();
+    c.admin = now.admin;
+    c.autostart = now.autostart;
+    c.welcomed = true;
+    c.seen_version = now.seen_version;
+    apply_and_tell(&app, c.clone());
+    Ok(Some(c))
+}
+
+#[tauri::command]
+fn open_settings_cmd(app: AppHandle) {
+    open_settings(&app);
+    if let Some(f) = app.get_webview_window("flyout") {
+        let _ = f.hide();
+    }
+}
+
+/// When the tray window last went away: a click on the tray icon takes the
+/// focus from it first, and that click should close it, not open it again.
+static FLYOUT_HIDDEN: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+/// The tray window has had the focus since it was last shown.
+static FLYOUT_FOCUSED: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+fn close_flyout(app: AppHandle) {
+    if let Some(f) = app.get_webview_window("flyout") {
+        if f.is_visible().unwrap_or(false) {
+            *FLYOUT_HIDDEN.lock().unwrap() = Some(std::time::Instant::now());
+        }
+        let _ = f.hide();
+    }
+}
+
+/// Installed with Scoop: Scoop updates it, not Deonyx itself.
+fn from_scoop() -> bool {
+    std::env::current_exe().is_ok_and(|p| p.to_string_lossy().to_ascii_lowercase().contains(r"\scoop\apps\"))
+}
+
+#[tauri::command]
 async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
+    if from_scoop() {
+        return Ok(None);
+    }
     let found = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
     let version = found.map(|u| u.version);
     *app.state::<State>().update.lock().unwrap() = version.clone();
@@ -244,23 +489,23 @@ fn sync_startup(app: &AppHandle, c: &Config) -> Result<(), String> {
 /// Saves the settings and hands them to the engine.
 fn apply(app: &AppHandle, config: Config) -> Result<(), String> {
     let s = app.state::<State>();
+    let mut config = config;
+    config.keep_profile();
     config::save(&config).map_err(|e| e.to_string())?;
-    if let Some(t) = s.tray.lock().unwrap().as_ref() {
-        let w = words(config.lang());
-        let _ = t.toggle.set_checked(config.enabled);
-        let _ = t.toggle.set_text(w[0]);
-        let _ = t.settings.set_text(w[1]);
-        let _ = t.quit.set_text(w[2]);
+    let old_lang = std::mem::replace(&mut *s.cfg.lock().unwrap(), config.clone()).lang();
+    if config.lang() != old_lang {
+        update_jump_list(config.lang());
     }
-    *s.cfg.lock().unwrap() = config.clone();
+    refresh_tray(app, &config);
     s.engine.send(Cmd::Config(config));
     Ok(())
 }
 
 /// Like apply(), and tells the settings window, for changes made elsewhere.
 fn apply_and_tell(app: &AppHandle, config: Config) {
-    if apply(app, config.clone()).is_ok() {
-        let _ = app.emit("config", &config);
+    if apply(app, config).is_ok() {
+        let c = app.state::<State>().cfg.lock().unwrap().clone();
+        let _ = app.emit("config", &c);
     }
 }
 
@@ -268,6 +513,19 @@ fn set_enabled(app: &AppHandle, on: bool) {
     let mut c = app.state::<State>().cfg.lock().unwrap().clone();
     c.enabled = on;
     apply_and_tell(app, c);
+}
+
+/// A new app, with its preset's settings when there is one.
+fn new_rule(app: &AppHandle, exe: String, name: String, icon: Option<String>) -> AppRule {
+    let mut r = AppRule { exe, name, icon, ..Default::default() };
+    let key = r.key();
+    if let Some(p) = app.state::<State>().presets.lock().unwrap().iter().find(|p| p.exe == key) {
+        r.darkness = p.darkness.unwrap_or(r.darkness);
+        r.text = p.text.unwrap_or(r.text);
+        r.protect = p.protect.unwrap_or(r.protect);
+        r.photos = p.photos.unwrap_or(r.photos);
+    }
+    r
 }
 
 /// Ctrl+Alt+F on an app: on if it was off, off if it was on.
@@ -285,7 +543,34 @@ fn toggle_app(app: &AppHandle, exe: String, path: String) {
         }
     } else {
         let d = apps::describe(&path);
-        c.apps.push(AppRule { exe: d.exe, name: d.name, icon: d.icon, ..Default::default() });
+        c.apps.push(new_rule(app, d.exe, d.name, d.icon));
+    }
+    apply_and_tell(app, c);
+}
+
+/// From the command line: an app on, off, or switched (on is None).
+fn set_app(app: &AppHandle, exe: String, on: Option<bool>) {
+    let mut c = app.state::<State>().cfg.lock().unwrap().clone();
+    let key = exe.to_ascii_lowercase();
+    if let Some(r) = c.apps.iter_mut().find(|r| r.key() == key) {
+        r.enabled = on.unwrap_or(!r.enabled);
+    } else if c.everything {
+        let at = c.exclude.iter().position(|e| e.exe.eq_ignore_ascii_case(&exe));
+        match (at, on) {
+            (Some(i), Some(true) | None) => {
+                c.exclude.remove(i);
+            }
+            (None, Some(false) | None) => {
+                let name = exe.trim_end_matches(".exe").trim_end_matches(".EXE").to_string();
+                c.exclude.push(Excluded { exe, name, icon: None });
+            }
+            _ => return,
+        }
+    } else if on != Some(false) {
+        let name = exe.trim_end_matches(".exe").trim_end_matches(".EXE").to_string();
+        c.apps.push(new_rule(app, exe, name, None));
+    } else {
+        return;
     }
     apply_and_tell(app, c);
 }
@@ -297,18 +582,40 @@ fn on_request(app: &AppHandle, r: Request) {
             let _ = app.run_on_main_thread(move || open_settings(&a));
         }
         Request::ToggleApp { exe, path } => toggle_app(app, exe, path),
+        Request::SetApp { exe, on } => set_app(app, exe, on),
+        Request::Pause(minutes) => pause(app.clone(), minutes),
+        Request::Restarted => {
+            // A fresh engine starts from the settings it was born with.
+            if let Some(s) = app.try_state::<State>() {
+                s.engine.send(Cmd::Presets(s.presets.lock().unwrap().clone()));
+                s.engine.send(Cmd::Config(s.cfg.lock().unwrap().clone()));
+            }
+            let _ = app.emit("crash", log::crash_report());
+        }
+        Request::Profile(name) => {
+            let mut c = app.state::<State>().cfg.lock().unwrap().clone();
+            if c.use_profile(&name) {
+                apply_and_tell(app, c);
+            }
+        }
         Request::Inspected(report) => {
             let _ = app.emit("inspected", &report);
             let a = app.clone();
             let _ = app.run_on_main_thread(move || open_settings(&a));
         }
-        Request::Area { exe, area } => {
+        Request::Area { exe, path, area } => {
             if let Ok(a) = &area {
                 let mut c = app.state::<State>().cfg.lock().unwrap().clone();
                 let key = exe.to_ascii_lowercase();
                 match c.apps.iter_mut().find(|r| r.key() == key) {
                     Some(r) => r.areas.push(*a),
-                    None => c.apps.push(AppRule { exe: exe.clone(), name: exe.clone(), areas: vec![*a], ..Default::default() }),
+                    None => {
+                        let d = if path.is_empty() { None } else { Some(apps::describe(&path)) };
+                        let (name, icon) = d.map_or((exe.clone(), None), |d| (d.name, d.icon));
+                        let mut r = new_rule(app, exe.clone(), name, icon);
+                        r.areas.push(*a);
+                        c.apps.push(r);
+                    }
                 }
                 apply_and_tell(app, c);
             }
@@ -323,18 +630,23 @@ fn on_request(app: &AppHandle, r: Request) {
 fn on_status(app: &AppHandle, st: Status) {
     if let Some(s) = app.try_state::<State>() {
         *s.status.lock().unwrap() = st.clone();
-        let mut c = s.cfg.lock().unwrap();
-        // The hotkey switches the engine directly; remember it.
-        if c.enabled != st.enabled {
-            c.enabled = st.enabled;
-            let _ = config::save(&c);
-            if let Some(t) = s.tray.lock().unwrap().as_ref() {
-                let _ = t.toggle.set_checked(st.enabled);
+        let changed = {
+            let mut c = s.cfg.lock().unwrap();
+            // The hotkey switches the engine directly; remember it.
+            if c.enabled != st.enabled {
+                c.enabled = st.enabled;
+                let _ = config::save(&c);
+                Some(c.clone())
+            } else {
+                None
             }
+        };
+        if let Some(c) = changed {
+            refresh_tray(app, &c);
         }
         if let Some(tray) = app.tray_by_id("main") {
-            let w = words(c.lang());
-            let _ = tray.set_tooltip(Some(if st.enabled { w[3] } else { w[4] }));
+            let w = words(s.cfg.lock().unwrap().lang());
+            let _ = tray.set_tooltip(Some(if st.enabled && !st.paused && st.paused_by.is_empty() { w[3] } else { w[4] }));
         }
     }
     let _ = app.emit("status", &st);
@@ -367,43 +679,174 @@ fn open_settings(app: &AppHandle) {
         .focused(!testing())
         .build();
     if let Err(e) = built {
-        eprintln!("settings window failed to open: {e}");
+        note!("settings window failed to open: {e}");
     }
 }
 
-fn build_tray(app: &AppHandle, cfg: &Config) -> tauri::Result<Tray> {
+/// The small window over the tray: on and off, a pause, the apps, the look.
+fn open_flyout(app: &AppHandle, at: PhysicalPosition<f64>) {
+    const W: f64 = 320.0;
+    const H: f64 = 440.0;
+    if FLYOUT_HIDDEN.lock().unwrap().is_some_and(|t| t.elapsed().as_millis() < 300) {
+        return;
+    }
+    let window = match app.get_webview_window("flyout") {
+        Some(w) => w,
+        None => {
+            let built = WebviewWindowBuilder::new(app, "flyout", WebviewUrl::App("flyout.html".into()))
+                .title("Deonyx")
+                .inner_size(W, H)
+                .decorations(false)
+                .resizable(false)
+                .skip_taskbar(true)
+                .always_on_top(true)
+                .visible(false)
+                .shadow(true)
+                .theme(Some(Theme::Dark))
+                .background_color(tauri::window::Color(18, 18, 22, 255))
+                // The first time, the window is only ready once its page is:
+                // showing it earlier doesn't stick.
+                .on_page_load(|w, p| {
+                    if p.event() == tauri::webview::PageLoadEvent::Finished {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
+                })
+                .build();
+            match built {
+                Ok(w) => {
+                    // Gone as soon as the focus goes elsewhere, like Windows' own
+                    // tray windows (the page listens too, this also covers its
+                    // frame).
+                    // Only after it had the focus: Windows may show it without
+                    // giving it the focus, and a "lost" one then means nothing.
+                    let a = app.clone();
+                    w.on_window_event(move |e| match e {
+                        tauri::WindowEvent::Focused(true) => FLYOUT_FOCUSED.store(true, Ordering::Relaxed),
+                        tauri::WindowEvent::Focused(false) if FLYOUT_FOCUSED.swap(false, Ordering::Relaxed) => {
+                            close_flyout(a.clone());
+                        }
+                        _ => {}
+                    });
+                    w
+                }
+                Err(e) => {
+                    note!("tray window failed to open: {e}");
+                    return open_settings(app);
+                }
+            }
+        }
+    };
+    // Next to the click, inside the screen's free area, above or below the
+    // taskbar.
+    if let Ok(Some(m)) = app.monitor_from_point(at.x, at.y) {
+        let s = m.scale_factor();
+        let wa = m.work_area();
+        let (w, h) = (W * s, H * s);
+        let (left, top) = (wa.position.x as f64, wa.position.y as f64);
+        let (right, bottom) = (left + wa.size.width as f64, top + wa.size.height as f64);
+        let x = (at.x - w / 2.0).clamp(left + 8.0, right - w - 8.0);
+        let y = if at.y > (top + bottom) / 2.0 { bottom - h - 8.0 } else { top + 8.0 };
+        let _ = window.set_position(PhysicalPosition::new(x, y));
+    }
+    let _ = window.emit("flyout-open", ());
+    FLYOUT_FOCUSED.store(false, Ordering::Relaxed);
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+/// The tray menu, rebuilt whenever the settings change.
+fn tray_menu(app: &AppHandle, cfg: &Config) -> tauri::Result<Menu<Wry>> {
     let w = words(cfg.lang());
-    let toggle = CheckMenuItem::with_id(app, "toggle", w[0], true, cfg.enabled, Some("Ctrl+Alt+D"))?;
+    let accel = if keys::parse(&cfg.keys.all).is_some() { Some(cfg.keys.all.as_str()) } else { None };
+    let toggle = CheckMenuItem::with_id(app, "toggle", w[0], true, cfg.enabled, accel)
+        .or_else(|_| CheckMenuItem::with_id(app, "toggle", w[0], true, cfg.enabled, None::<&str>))?;
+    let pause = if cfg.paused() {
+        MenuItem::with_id(app, "resume", w[6], true, None::<&str>)?
+    } else {
+        MenuItem::with_id(app, "pause", w[5], cfg.enabled, None::<&str>)?
+    };
+    let checks: Vec<CheckMenuItem<Wry>> = cfg
+        .apps
+        .iter()
+        .map(|a| CheckMenuItem::with_id(app, format!("app:{}", a.key()), if a.name.is_empty() { &a.exe } else { &a.name }, true, a.enabled, None::<&str>))
+        .collect::<tauri::Result<_>>()?;
+    let refs: Vec<&dyn IsMenuItem<Wry>> = checks.iter().map(|c| c as &dyn IsMenuItem<Wry>).collect();
+    let apps = Submenu::with_items(app, w[7], !checks.is_empty(), &refs)?;
+    let profiles: Vec<CheckMenuItem<Wry>> = cfg
+        .profiles
+        .iter()
+        .map(|p| CheckMenuItem::with_id(app, format!("profile:{}", p.name), &p.name, true, cfg.profile == p.name, None::<&str>))
+        .collect::<tauri::Result<_>>()?;
+    let refs: Vec<&dyn IsMenuItem<Wry>> = profiles.iter().map(|c| c as &dyn IsMenuItem<Wry>).collect();
+    let profile_menu = Submenu::with_items(app, w[8], true, &refs)?;
     let settings = MenuItem::with_id(app, "settings", w[1], true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", w[2], true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&toggle, &PredefinedMenuItem::separator(app)?, &settings, &quit])?;
-    let item = toggle.clone();
+    let sep = PredefinedMenuItem::separator(app)?;
+    let sep2 = PredefinedMenuItem::separator(app)?;
+    let mut items: Vec<&dyn IsMenuItem<Wry>> = vec![&toggle, &pause, &apps];
+    if !profiles.is_empty() {
+        items.push(&profile_menu);
+    }
+    items.extend([&sep as &dyn IsMenuItem<Wry>, &settings, &sep2, &quit]);
+    Menu::with_items(app, &items)
+}
+
+fn refresh_tray(app: &AppHandle, cfg: &Config) {
+    if let (Some(tray), Ok(menu)) = (app.tray_by_id("main"), tray_menu(app, cfg)) {
+        let _ = tray.set_menu(Some(menu));
+    }
+}
+
+fn on_menu(app: &AppHandle, id: &str) {
+    let c = app.state::<State>().cfg.lock().unwrap().clone();
+    match id {
+        "toggle" => set_enabled(app, !c.enabled),
+        "pause" => pause(app.clone(), 60),
+        "resume" => pause(app.clone(), 0),
+        "settings" => open_settings(app),
+        "quit" => {
+            app.state::<State>().engine.send(Cmd::Quit);
+            app.exit(0);
+        }
+        _ => {
+            if let Some(name) = id.strip_prefix("profile:") {
+                let mut c = c;
+                if c.use_profile(name) {
+                    apply_and_tell(app, c);
+                }
+            } else if let Some(key) = id.strip_prefix("app:") {
+                let mut c = c;
+                if let Some(r) = c.apps.iter_mut().find(|r| r.key() == key) {
+                    r.enabled = !r.enabled;
+                    apply_and_tell(app, c);
+                }
+            }
+        }
+    }
+}
+
+fn build_tray(app: &AppHandle, cfg: &Config) -> tauri::Result<()> {
+    let w = words(cfg.lang());
     TrayIconBuilder::with_id("main")
         .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
         .tooltip(if cfg.enabled { w[3] } else { w[4] })
-        .menu(&menu)
+        .menu(&tray_menu(app, cfg)?)
         .show_menu_on_left_click(false)
-        .on_menu_event(move |app, e| match e.id.as_ref() {
-            "toggle" => set_enabled(app, item.is_checked().unwrap_or(true)),
-            "settings" => open_settings(app),
-            "quit" => {
-                app.state::<State>().engine.send(Cmd::Quit);
-                app.exit(0);
-            }
-            _ => {}
-        })
+        .on_menu_event(|app, e| on_menu(app, e.id.as_ref()))
         .on_tray_icon_event(|tray, e| {
-            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
-                open_settings(tray.app_handle());
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, position, .. } = e {
+                open_flyout(tray.app_handle(), position);
             }
         })
         .build(app)?;
-    Ok(Tray { toggle, settings, quit })
+    Ok(())
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
+    log::keep_crashes();
 
     // The copy that darkens normal apps for a Deonyx running as administrator.
     if has("--helper") {
@@ -420,6 +863,14 @@ fn main() {
         };
         std::process::exit(if r.is_ok() { 0 } else { 1 });
     }
+    // A command for the running Deonyx (cli.rs).
+    if let Some(code) = cli::run(&args) {
+        std::process::exit(code);
+    }
+    // The id the Start menu shortcut has, so the jump list lands on it.
+    if !testing() {
+        jumplist::claim_app_id();
+    }
     // Started by the task right after the old instance quit: let it go first.
     if has("--from-task") {
         std::thread::sleep(std::time::Duration::from_millis(1500));
@@ -431,6 +882,13 @@ fn main() {
         // or start it through the task.
         if admin::ask_running_to_open() || admin::run_task() {
             return;
+        }
+        // The task is gone (removed outside Deonyx): run without
+        // administrator rights, and show the switch as it really is.
+        if !admin::task_exists() {
+            note!("the administrator task is gone; running without administrator rights");
+            cfg.admin = false;
+            let _ = config::save(&cfg);
         }
     }
     let marker = config::dir().join("open-settings");
@@ -467,15 +925,15 @@ fn main() {
             let engine = Engine::start(
                 cfg.clone(),
                 Role::Main,
-                Box::new(move |st| on_status(&status_handle, st)),
-                Box::new(move |r| on_request(&request_handle, r)),
+                Arc::new(move |st| on_status(&status_handle, st)),
+                Arc::new(move |r| on_request(&request_handle, r)),
             );
             app.manage(State {
                 status: Mutex::new(Status { enabled: cfg.enabled, ..Default::default() }),
                 cfg: Mutex::new(cfg.clone()),
                 engine,
-                tray: Mutex::new(None),
                 update: Mutex::new(None),
+                presets: Mutex::new(presets::load()),
             });
             // Starting with Windows used to live only in the Run key.
             if !cfg.admin && !cfg.autostart && app.autolaunch().is_enabled().unwrap_or(false) {
@@ -484,13 +942,31 @@ fn main() {
                 let _ = config::save(&c);
                 *app.state::<State>().cfg.lock().unwrap() = c;
             }
-            let tray = build_tray(app.handle(), &cfg)?;
-            *app.state::<State>().tray.lock().unwrap() = Some(tray);
+            build_tray(app.handle(), &cfg)?;
+            update_jump_list(cfg.lang());
             if !hidden || first_run {
                 open_settings(app.handle());
             }
-            // Look for a new version a little after starting.
-            if cfg.updates && !testing {
+            // Test copies can open the tray window as if clicked at "x,y".
+            if let Some((x, y)) = std::env::var("DEONYX_FLYOUT_AT")
+                .ok()
+                .filter(|_| testing)
+                .and_then(|v| v.split_once(',').and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?))))
+            {
+                open_flyout(app.handle(), PhysicalPosition::new(x, y));
+            }
+            if cfg.updates && !testing && !from_scoop() {
+                // Newer app presets, then a new version, a little after starting.
+                let h = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(8));
+                    if presets::refresh() {
+                        let list = presets::load();
+                        *h.state::<State>().presets.lock().unwrap() = list.clone();
+                        h.state::<State>().engine.send(Cmd::Presets(list.clone()));
+                        let _ = h.emit("presets", &list);
+                    }
+                });
                 let h = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     tokio_sleep(10).await;
@@ -513,7 +989,20 @@ fn main() {
             set_autostart,
             set_admin,
             inspect,
+            pick_area,
             draw_area,
+            list_screens,
+            sun_times,
+            pause,
+            save_profile,
+            use_profile,
+            delete_profile,
+            dismiss_crash,
+            diagnostics,
+            export_config,
+            import_config,
+            open_settings_cmd,
+            close_flyout,
             check_update,
             install_update
         ])
@@ -547,10 +1036,10 @@ fn helper_main(args: &[String]) {
     let engine = Engine::start(
         config::load(),
         Role::Helper { parent },
-        Box::new(move |st| {
+        Arc::new(move |st| {
             helper::send(hwnd(main_window), Some(hwnd(st.hwnd)), helper::STATUS, &st);
         }),
-        Box::new(|_| {}),
+        Arc::new(|_| {}),
     );
     helper::wait_for_parent(parent, hwnd(main_window));
     engine.send(Cmd::Quit);

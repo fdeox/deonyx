@@ -1,0 +1,78 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "UUID": "com.fdeox.deonyx",
+  "Name": "Deonyx",
+  "Version": "1.0.0.0",
+  "Author": "fdeox",
+  "Description": "Dark mode for any app, from a key: switch darkening, pause it, switch an app, the window under the mouse, or a profile. Needs Deonyx 0.2.0 or newer.",
+  "URL": "https://github.com/fdeox/deonyx",
+  "Icon": "imgs/plugin/icon",
+  "Category": "Deonyx",
+  "CategoryIcon": "imgs/plugin/category",
+  "CodePath": "bin/plugin.mjs",
+  "Nodejs": { "Version": "20" },
+  "SDKVersion": 2,
+  "Software": { "MinimumVersion": "7.1" },
+  "OS": [{ "Platform": "windows", "MinimumVersion": "10" }],
+  "Actions": [
+    {
+      "UUID": "com.fdeox.deonyx.toggle",
+      "Name": "Darkening on/off",
+      "Tooltip": "Turns darkening on or off. The key shows whether it's on.",
+      "Icon": "imgs/actions/toggle",
+      "Controllers": ["Keypad"],
+      "DisableAutomaticStates": true,
+      "States": [
+        { "Image": "imgs/keys/on", "Name": "On" },
+        { "Image": "imgs/keys/off", "Name": "Off" }
+      ]
+    },
+    {
+      "UUID": "com.fdeox.deonyx.pause",
+      "Name": "Pause",
+      "Tooltip": "Pauses darkening for a while, or ends the pause.",
+      "Icon": "imgs/actions/pause",
+      "Controllers": ["Keypad"],
+      "DisableAutomaticStates": true,
+      "PropertyInspectorPath": "ui/pause.html",
+      "States": [
+        { "Image": "imgs/keys/pause", "Name": "Running" },
+        { "Image": "imgs/keys/paused", "Name": "Paused" }
+      ]
+    },
+    {
+      "UUID": "com.fdeox.deonyx.app",
+      "Name": "App on/off",
+      "Tooltip": "Switches darkening of one app. The key shows whether it's darkened.",
+      "Icon": "imgs/actions/app",
+      "Controllers": ["Keypad"],
+      "DisableAutomaticStates": true,
+      "PropertyInspectorPath": "ui/app.html",
+      "States": [
+        { "Image": "imgs/keys/app", "Name": "Darkened" },
+        { "Image": "imgs/keys/app-off", "Name": "Not darkened" }
+      ]
+    },
+    {
+      "UUID": "com.fdeox.deonyx.window",
+      "Name": "Window under the mouse",
+      "Tooltip": "Switches darkening of the window under the mouse, until it closes.",
+      "Icon": "imgs/actions/window",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "imgs/keys/window" }]
+    },
+    {
+      "UUID": "com.fdeox.deonyx.profile",
+      "Name": "Profile",
+      "Tooltip": "Switches to a Deonyx profile. The key lights up while it's in use.",
+      "Icon": "imgs/actions/profile",
+      "Controllers": ["Keypad"],
+      "DisableAutomaticStates": true,
+      "PropertyInspectorPath": "ui/profile.html",
+      "States": [
+        { "Image": "imgs/keys/profile", "Name": "Not in use" },
+        { "Image": "imgs/keys/profile-on", "Name": "In use" }
+      ]
+    }
+  ]
+}

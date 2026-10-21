@@ -1,4 +1,4 @@
-// The one D3D11 device every layer shares, and the dark-mode shader.
+// The one D3D11 device every layer shares, and the dark-mode shaders.
 
 use std::ffi::c_void;
 use std::mem::size_of;
@@ -14,7 +14,7 @@ use windows::Win32::Graphics::Dxgi::*;
 use windows::Win32::System::WinRT::Direct3D11::CreateDirect3D11DeviceFromDXGIDevice;
 
 const SHADER: &str = include_str!("shader.hlsl");
-pub const MAX_RECTS: usize = 8;
+pub const MAX_RECTS: usize = 32;
 
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
@@ -29,7 +29,11 @@ pub struct Params {
     pub fringe: f32,
     pub holes: f32,
     pub warm: f32,
-    pub pad: [f32; 3],
+    /// 0..1, how strongly the darkening shows (fades in and out).
+    pub strength: f32,
+    /// Curve on the flipped lightness: 1 leaves it, below 1 lifts faint text.
+    pub boost: f32,
+    pub pad: f32,
 }
 
 pub struct Gpu {
@@ -39,6 +43,8 @@ pub struct Gpu {
     pub factory: IDXGIFactory2,
     pub vs: ID3D11VertexShader,
     pub ps: ID3D11PixelShader,
+    /// Rates 4x4 blocks for looking like a photo (see photos.rs).
+    pub photo: ID3D11PixelShader,
     pub cb: ID3D11Buffer,
     /// See-through layers go through DirectComposition. None falls back to
     /// opaque layers (DEONYX_OPAQUE=1, or if it isn't available).
@@ -104,10 +110,13 @@ impl Gpu {
 
             let vsb = compile(b"vs\0", b"vs_5_0\0")?;
             let psb = compile(b"ps\0", b"ps_5_0\0")?;
+            let phb = compile(b"photo\0", b"ps_5_0\0")?;
             let mut vs = None;
             let mut ps = None;
+            let mut photo = None;
             device.CreateVertexShader(bytes(&vsb), None, Some(&mut vs))?;
             device.CreatePixelShader(bytes(&psb), None, Some(&mut ps))?;
+            device.CreatePixelShader(bytes(&phb), None, Some(&mut photo))?;
             let bd = D3D11_BUFFER_DESC {
                 ByteWidth: size_of::<Params>() as u32,
                 Usage: D3D11_USAGE_DEFAULT,
@@ -123,6 +132,7 @@ impl Gpu {
                 factory,
                 vs: vs.unwrap(),
                 ps: ps.unwrap(),
+                photo: photo.unwrap(),
                 cb: cb.unwrap(),
                 dcomp,
             })

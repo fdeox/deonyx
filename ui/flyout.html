@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Deonyx</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="flyout.css">
+</head>
+<body class="flyout">
+  <header>
+    <img class="logo" src="logo.svg" alt="">
+    <span class="title">
+      <strong>Deonyx</strong>
+      <small id="sub"></small>
+    </span>
+    <input type="checkbox" class="switch big" id="master">
+  </header>
+  <button id="pause" class="wide"></button>
+  <div class="seg small" id="style">
+    <button data-style="gray" data-i18n="look.gray">Gray</button>
+    <button data-style="black" data-i18n="look.black">Black</button>
+    <button data-style="soft" data-i18n="look.soft">Soft</button>
+    <button data-style="paper" data-i18n="look.paper">Paper</button>
+  </div>
+  <div id="profiles" class="seg small" hidden></div>
+  <div id="apps" class="list"></div>
+  <footer>
+    <button class="quiet" id="settings" data-i18n="flyout.settings">Settings</button>
+  </footer>
+  <script src="i18n.js"></script>
+  <script src="lang/de.js"></script>
+  <script src="lang/fr.js"></script>
+  <script src="lang/es.js"></script>
+  <script src="lang/it.js"></script>
+  <script src="lang/pt.js"></script>
+  <script src="lang/nl.js"></script>
+  <script src="lang/ru.js"></script>
+  <script src="lang/uk.js"></script>
+  <script src="lang/ja.js"></script>
+  <script src="lang/ko.js"></script>
+  <script src="lang/zh.js"></script>
+  <script src="flyout.js"></script>
+</body>
+</html>

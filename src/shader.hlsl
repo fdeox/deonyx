@@ -1,10 +1,12 @@
 // One full-window triangle; the pixel shader reads the captured window 1:1.
+// A second pixel shader (photo) rates 4x4 blocks for looking like a photo;
+// photos.rs turns those into rectangles kept in real colours.
 
 Texture2D<float4> src : register(t0);
 
 cbuffer Params : register(b0)
 {
-    float4 rects[8];   // protected areas in window pixels: left, top, right, bottom
+    float4 rects[32];  // protected areas in window pixels: left, top, right, bottom
     uint count;
     float lmin;        // lightness a white background becomes
     float lmax;        // lightness black text becomes
@@ -14,7 +16,9 @@ cbuffer Params : register(b0)
     float fringe;      // 1 = keep saturation, which calms ClearType colour fringes
     float holes;       // 1 = the layer can be see-through: kept areas show the real window
     float warm;        // 0..1 warm tint, like Night light
-    float3 pad;
+    float strength;    // 0..1: 0 shows the real colours, for fading in and out
+    float boost;       // curve on the flipped lightness: < 1 lifts faint text
+    float pad;
 };
 
 float4 vs(uint id : SV_VertexID) : SV_Position
@@ -75,6 +79,13 @@ float4 keep(float4 c)
     return holes > 0.0 ? float4(0, 0, 0, 0) : float4(c.rgb, 1);
 }
 
+// The darkened colour, shown as strongly as `strength` says: over the real
+// window (see-through, premultiplied) or mixed with the captured pixel.
+float4 shown(float3 rgb, float4 c)
+{
+    return holes > 0.0 ? float4(rgb * strength, strength) : float4(lerp(c.rgb, rgb, strength), 1);
+}
+
 float4 ps(float4 pos : SV_Position) : SV_Target
 {
     float4 c = src.Load(int3(pos.xy, 0));
@@ -129,7 +140,13 @@ float4 ps(float4 pos : SV_Position) : SV_Target
             lab.yz = avg;
     }
     float before = lab.x;
-    lab.x = lmin + (1.0 - lab.x) * (lmax - lmin);
+    // Light grey text on white ends up close to the dark background; a curve
+    // that lifts the low end keeps it readable while black text and the
+    // background stay where they are.
+    float t = saturate(1.0 - lab.x);
+    if (boost > 0.0 && boost < 1.0)
+        t = pow(t, boost);
+    lab.x = lmin + t * (lmax - lmin);
     // Keep saturation (colour relative to lightness), not raw colour: a
     // faint pink beside white text, say a ClearType fringe, would otherwise
     // turn into a loud red outline once it is dark.
@@ -137,5 +154,54 @@ float4 ps(float4 pos : SV_Position) : SV_Target
     lab.yz *= sat * keep;
     float3 rgb = to_srgb(saturate(from_oklab(lab)));
     rgb *= lerp(float3(1, 1, 1), float3(1.0, 0.86, 0.68), warm);
-    return float4(rgb, 1);
+    return shown(rgb, c);
+}
+
+float light(float3 c)
+{
+    return pow(max(dot(to_lin(c), float3(0.2126, 0.7152, 0.0722)), 0), 1.0 / 3.0);
+}
+
+// One output pixel per 4x4 block of the window: 1 if the block looks like a
+// photo or a video frame, 0.5 if it's at least not a flat fill (a calm sky
+// inside a photo, say), 0 for flat colour. Interfaces are made of flat
+// colour, so most pixels there equal a neighbour; text has two levels (paper
+// and ink) with a few soft edge pixels between. A photo has neither: its
+// neighbours differ and many of its pixels sit between its darkest and
+// lightest.
+float photo(float4 pos : SV_Position) : SV_Target
+{
+    uint w, h, levels;
+    src.GetDimensions(0, w, h, levels);
+    int2 size = int2(w, h);
+    int2 o = int2(pos.xy) * 4;
+    float l[16];
+    float lo = 1, hi = 0;
+    float flat = 0;
+    float solid = 0;
+    [unroll] for (int y = 0; y < 4; y++)
+    {
+        [unroll] for (int x = 0; x < 4; x++)
+        {
+            int2 p = clamp(o + int2(x, y), int2(0, 0), size - 1);
+            float3 c = src.Load(int3(p, 0)).rgb;
+            float3 r = src.Load(int3(clamp(p + int2(1, 0), int2(0, 0), size - 1), 0)).rgb;
+            float3 d = src.Load(int3(clamp(p + int2(0, 1), int2(0, 0), size - 1), 0)).rgb;
+            bool same_r = all(abs(c - r) < 0.5 / 255.0);
+            bool same_d = all(abs(c - d) < 0.5 / 255.0);
+            flat += (same_r || same_d) ? 1.0 : 0.0;
+            solid += (same_r && same_d) ? 1.0 : 0.0;
+            float v = light(c);
+            l[y * 4 + x] = v;
+            lo = min(lo, v);
+            hi = max(hi, v);
+        }
+    }
+    float range = hi - lo;
+    float mid = 0;
+    [unroll] for (int i = 0; i < 16; i++)
+        mid += (l[i] > lo + 0.2 * range && l[i] < hi - 0.2 * range) ? 1.0 : 0.0;
+    if (flat / 16.0 < 0.35 && mid / 16.0 >= 0.3 && range >= 0.05)
+        return 1.0;
+    return solid / 16.0 < 0.5 ? 0.5 : 0.0;
 }

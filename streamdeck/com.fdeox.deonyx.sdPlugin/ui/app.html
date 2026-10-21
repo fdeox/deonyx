@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="pi.css">
+</head>
+<body>
+  <div class="item">
+    <label for="app">Program</label>
+    <input id="app" data-setting="app" list="apps" placeholder="SketchUp.exe" spellcheck="false">
+    <datalist id="apps"></datalist>
+  </div>
+  <div class="item">
+    <label for="mode">Pressing it</label>
+    <select id="mode" data-setting="mode">
+      <option value="switch">switches it</option>
+      <option value="on">turns it on</option>
+      <option value="off">turns it off</option>
+    </select>
+  </div>
+  <p class="hint">The program's file name. Apps already in Deonyx are suggested.</p>
+  <script src="pi.js"></script>
+</body>
+</html>

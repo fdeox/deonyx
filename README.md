@@ -30,8 +30,15 @@ Deonyx is free, and it does it properly.
 
 ## How it works
 
+<p align="center">
+  <img src="assets/screenshots/darkening.gif" width="720" alt="SketchUp switching from light to dark and back with Ctrl+Alt+D">
+  <br>
+  <sub>Ctrl+Alt+D switches darkening on and off, with a short fade.</sub>
+</p>
+
 - **Lightness, not colors.** Deonyx flips only how light each pixel is, measured the way the eye sees it (OKLab). White turns dark grey, black text turns soft white, and red stays red.
 - **Your 3D view stays real.** Viewports, canvases and pictures are found automatically through Windows UI Automation and keep their original colors.
+- **Photos stay photos.** Pictures and videos inside a window are found as they appear and kept in their real colors, so nothing ever looks like a film negative.
 - **Every window of the app.** Menus, lists, tooltips and dialogs are darkened too, in less than a frame after they appear.
 - **No flash.** The dark layer is tied to the app's own window, so switching windows never shows the light version.
 - **Leaves dark things alone.** A window that is already dark is shown as it is.
@@ -42,16 +49,22 @@ Deonyx is free, and it does it properly.
 <img src="assets/screenshots/settings.png" width="400" align="right" alt="Deonyx settings">
 
 - **Your apps, or every light window.** Pick the apps to darken, or let Deonyx darken every light window and keep a list of programs it leaves alone.
-- **Tune each app.** Its own background darkness and text brightness.
-- **Pick a look.** Gray is easy on the eyes, Black suits OLED screens, Soft lowers the contrast. A warm tint makes evenings easier.
-- **Choose when.** Always, whenever Windows is in dark mode, or between the hours you set.
-- **Keep real colors where you want them.** Draw a box over a video, a canvas or a 3D view and it stays as it is, even when the window is resized.
-- **Ask why.** Click any window and Deonyx tells you why it is or isn't dark, with a button that fixes it when it can.
-- **Hotkeys.** Ctrl+Alt+F darkens or restores the app in front of you, Ctrl+Alt+D turns darkening on and off.
+- **Tune each app.** Its own background darkness and text brightness. Well-known apps start with settings that suit them.
+- **Pick a look.** Gray is easy on the eyes, Black suits OLED screens, Soft lowers the contrast, Paper is warm and calm for long reading. Faint gray text stays readable, a warm tint makes evenings easier, and each screen can have its own look, or none at all.
+- **Profiles.** Keep setups like Day, Night or Presenting under a name and switch in one click, from the settings, the tray, a Stream Deck key or the command line.
+- **Choose when.** Always, whenever Windows is in dark mode, between the hours you set, or from sunset to sunrise where you live. On battery it can keep going, save power, or pause. It also steps aside by itself while the games or programs you pick are running.
+- **Keep real colors where you want them.** Click a video, a canvas or a 3D view, or draw a box over it, and it stays as it is, even when the window is resized.
+- **Peek at the real colors.** Hold Ctrl+Alt+P and every window shows its real colors until you let go. Handy for picking a color.
+- **Share your screen in real colors.** Screen sharing and screenshots can show your apps as they really are, while you keep seeing them dark. Always, or only while Zoom or Webex shares or OBS, Streamlabs or XSplit runs.
+- **Ask why.** Click any window and Deonyx tells you why it is or isn't dark, with a button that fixes it when it can. If the app has a dark mode of its own, it tells you where.
+- **Hotkeys you choose.** Ctrl+Alt+D turns darkening on and off, Ctrl+Alt+F darkens or restores the app in front of you, Ctrl+Alt+W does it for just the window under the mouse, and each app can have a hotkey of its own. Change any of them in the settings.
+- **A tray window.** Click the tray icon to switch apps on and off, change the look or the profile, or pause for an hour. Right-click Deonyx on the taskbar or in Start for quick tasks.
+- **Command line.** `deonyx --toggle`, `--on`, `--off`, `--front`, `--window`, `--app SketchUp.exe on|off`, `--pause 30`, `--resume`, `--profile Night`, and `--status` for the state as JSON. Handy for AutoHotkey and scripts.
+- **Stream Deck.** The Deonyx plugin puts darkening, pausing, apps, profiles and the window under the mouse on keys that show their state. Get `Deonyx-1.0.0.streamDeckPlugin` from the [latest release](https://github.com/fdeox/deonyx/releases/latest) and open it.
 - **Run as administrator** to darken apps like Task Manager. Normal apps are still darkened without administrator rights, so tools like AutoHotkey keep working in them.
 - **Start with Windows** and wait quietly in the tray.
 - **13 languages:** English, Türkçe, Deutsch, Français, Español, Italiano, Português, Nederlands, Русский, Українська, 日本語, 한국어 and 简体中文.
-- **Updates itself** when a new version is out.
+- **Updates itself** when a new version is out, and brings a "Copy diagnostics" button for bug reports. If something fails, Deonyx gets back up by itself and keeps a report you can send.
 
 <br clear="right">
 
@@ -59,7 +72,7 @@ Deonyx is free, and it does it properly.
 
 <img src="assets/screenshots/installer.png" width="360" align="right" alt="The Deonyx installer">
 
-Download `Deonyx_..._x64-setup.exe` from the [latest release](https://github.com/fdeox/deonyx/releases/latest) and run it. It installs for your user only, without administrator rights. Deonyx needs Windows 11, or Windows 10 version 2004 or later.
+Download `Deonyx_..._x64-setup.exe` from the [latest release](https://github.com/fdeox/deonyx/releases/latest) and run it. It installs for your user only, without administrator rights. Deonyx needs Windows 11, or Windows 10 version 2004 or later. On Windows 10 it copies the screen instead of capturing each window, because Windows 10 draws a yellow border around every captured window.
 
 Deonyx isn't code-signed, so Windows SmartScreen may say it protected your PC. Click **More info**, then **Run anyway**.
 
@@ -71,9 +84,13 @@ Deonyx lives in the tray. Click its icon, choose **Add an app**, and pick a prog
 
 Questions, bugs or ideas? Join the [Deonyx Discord](https://discord.gg/5Z6XRtKG2V): there's a help forum, bug reports and suggestions, and every new version is announced there. You can also open an [issue](https://github.com/fdeox/deonyx/issues).
 
+## Ready settings for apps
+
+[presets.json](presets.json) holds what Deonyx knows about well-known apps: where their own dark mode is, render windows best left alone, a darkness that suits them, and how to find their 3D views. Deonyx picks up the newest copy from this repository, so an app added there reaches everyone without a new version. Know an app that needs one? Open a pull request or tell us on Discord.
+
 ## Privacy
 
-Deonyx sends nothing anywhere. The only thing it asks the internet is whether a new version is out (from this repository's releases), and you can turn that off in its settings.
+Deonyx sends nothing anywhere. The only things it asks the internet for, both from this repository, are whether a new version is out and the newest [presets.json](presets.json). Turn off updates in its settings and it asks for nothing. Even the sunset and sunrise times are worked out on your PC from the city you pick.
 
 ## Build
 
@@ -85,6 +102,8 @@ target\release\deonyx.exe
 ```
 
 The installer is built with the [Tauri CLI](https://v2.tauri.app/reference/cli/): `cargo tauri build --bundles nsis`.
+
+The Stream Deck plugin lives in [streamdeck](streamdeck) and needs [Node.js](https://nodejs.org): `npm install`, then `node build.mjs --pack`.
 
 ## License
 
