@@ -13,6 +13,7 @@
   <a href="https://github.com/fdeox/deonyx/releases/latest"><img alt="Download" src="https://img.shields.io/github/v/release/fdeox/deonyx?label=download&style=for-the-badge&color=8b7cf6"></a>
   <img alt="Windows 10 and 11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-1e1e27?style=for-the-badge">
   <a href="LICENSE"><img alt="GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-1e1e27?style=for-the-badge"></a>
+  <a href="https://discord.gg/5Z6XRtKG2V"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-5865f2?style=for-the-badge&logo=discord&logoColor=white"></a>
 </p>
 
 <p align="center">
@@ -65,6 +66,10 @@ Deonyx isn't code-signed, so Windows SmartScreen may say it protected your PC. C
 Deonyx lives in the tray. Click its icon, choose **Add an app**, and pick a program from the open or installed ones. Settings are kept in `%APPDATA%\Deonyx\config.json`. To remove Deonyx, uninstall it from Settings > Apps like any other app.
 
 <br clear="right">
+
+## Help and ideas
+
+Questions, bugs or ideas? Join the [Deonyx Discord](https://discord.gg/5Z6XRtKG2V): there's a help forum, bug reports and suggestions, and every new version is announced there. You can also open an [issue](https://github.com/fdeox/deonyx/issues).
 
 ## Privacy
 
