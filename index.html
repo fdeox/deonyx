@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deonyx: dark mode for any Windows app</title>
+  <meta name="description" content="Free and open source dark mode for any Windows app. Deonyx flips lightness, not colors, so 3D views, photos and colors stay true and nothing flashes white.">
+  <meta property="og:title" content="Deonyx: dark mode for any Windows app">
+  <meta property="og:description" content="Free and open source. Flips lightness, not colors, so 3D views and photos stay true.">
+  <meta property="og:image" content="https://fdeox.github.io/deonyx/assets/social.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="assets/logo.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <nav>
+    <a class="brand" href="#"><img src="assets/logo.svg" alt=""> Deonyx</a>
+    <span class="links">
+      <a href="#features">Features</a>
+      <a href="#try">Try it</a>
+      <a href="#faq">FAQ</a>
+      <a href="https://github.com/fdeox/deonyx">GitHub</a>
+      <a class="button small" href="https://github.com/fdeox/deonyx/releases/latest">Download</a>
+    </span>
+  </nav>
+
+  <header class="hero">
+    <div class="stars" aria-hidden="true"></div>
+    <img class="gem" src="assets/logo.svg" alt="Deonyx logo">
+    <h1>Dark mode for <span>any</span> Windows app.</h1>
+    <p class="lead">Free and open source. Deonyx flips lightness, not colors: your 3D views, photos and brand colors stay true, and nothing flashes white.</p>
+    <div class="cta">
+      <a class="button" href="https://github.com/fdeox/deonyx/releases/latest">Download for Windows</a>
+      <a class="button ghost" href="https://github.com/fdeox/deonyx">View on GitHub</a>
+    </div>
+    <p class="fine" id="version">Windows 10 and 11 · free · GPL-3.0</p>
+  </header>
+
+  <section class="compare-wrap">
+    <div class="compare" id="compare">
+      <img src="assets/after.webp" alt="SketchUp with Deonyx" class="after">
+      <div class="before-clip"><img src="assets/before.webp" alt="SketchUp as it is" class="before"></div>
+      <div class="handle" role="slider" aria-label="Before and after" tabindex="0"><span></span></div>
+      <em class="tag left">As it is</em><em class="tag right">With Deonyx</em>
+    </div>
+    <p class="caption">SketchUp has no dark mode. Drag the line: menus, toolbars and panels go dark, the 3D view keeps its real colors.</p>
+  </section>
+
+  <section class="switch-demo">
+    <h2>One hotkey, and it fades in</h2>
+    <p class="sub">Ctrl+Alt+D switches darkening on and off anywhere. Hold Ctrl+Alt+P to peek at the real colors.</p>
+    <img src="assets/darkening.webp" alt="SketchUp switching from light to dark and back with Deonyx" loading="lazy">
+  </section>
+
+  <section id="features">
+    <h2>Everything you'd want from a dark mode</h2>
+    <div class="grid">
+      <article><h3>Lightness, not colors</h3><p>White turns dark grey, black text turns soft white, red stays red. Measured the way the eye sees it (OKLab), not a cheap invert.</p></article>
+      <article><h3>3D views stay real</h3><p>Viewports and canvases are found on their own and keep their colors, so models and textures look right.</p></article>
+      <article><h3>Photos stay photos</h3><p>Pictures and videos inside a window are found as they appear and kept as they are. Nothing looks like a film negative.</p></article>
+      <article><h3>No white flash</h3><p>The dark layer is tied to the app's own window, so switching windows never shows the light version.</p></article>
+      <article><h3>Peek at real colors</h3><p>Hold Ctrl+Alt+P and every window shows its real colors until you let go. Made for picking colors.</p></article>
+      <article><h3>Share in real colors</h3><p>Screen sharing and screenshots can show your apps as they really are, while you keep seeing them dark. Always, or on its own during meetings and streams.</p></article>
+      <article><h3>Sunset to sunrise</h3><p>Darken always, with Windows' dark mode, between set hours, or when the sun goes down where you live.</p></article>
+      <article><h3>Each screen its own look</h3><p>Gray, Black for OLED, Soft, or warm Paper for long reading. Give a screen its own look, or leave a projector alone.</p></article>
+      <article><h3>Profiles</h3><p>Keep setups like Day, Night or Presenting and switch in one click, from the tray, a hotkey script or a Stream Deck key.</p></article>
+      <article><h3>Steps aside for games</h3><p>Pick the games or programs that need their real colors, and darkening pauses while they run.</p></article>
+      <article><h3>Ask why</h3><p>Click any window and Deonyx tells you why it is or isn't dark, and fixes it when it can.</p></article>
+      <article><h3>Your hotkeys, your way</h3><p>Change every hotkey, give each app its own, switch just the window under the mouse, or script it: <code>deonyx --toggle</code>.</p></article>
+      <article><h3>Stream Deck</h3><p>A plugin puts darkening, pauses, apps and profiles on keys that show what's on.</p></article>
+      <article><h3>Even admin apps</h3><p>Task Manager and other apps that run as administrator can be darkened too, without breaking AutoHotkey.</p></article>
+      <article><h3>13 languages</h3><p>English, Türkçe, Deutsch, Français, Español, Italiano, Português, Nederlands, Русский, Українська, 日本語, 한국어, 简体中文.</p></article>
+    </div>
+  </section>
+
+  <section id="try">
+    <h2>Try it on your own screenshot</h2>
+    <p class="sub">Drop a screenshot of any light app. It's darkened right here in your browser with the same math Deonyx uses. Nothing is uploaded.</p>
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept="image/*" hidden>
+      <span id="drop-text">Drop a screenshot here, paste one, or click to choose</span>
+      <canvas id="out" hidden></canvas>
+    </label>
+    <div class="try-tools" id="try-tools" hidden>
+      <span class="seg" id="style">
+        <button data-style="gray" class="on">Gray</button>
+        <button data-style="black">Black</button>
+        <button data-style="soft">Soft</button>
+      </span>
+      <button class="ghost-btn" id="toggle">Show original</button>
+    </div>
+    <p class="fine">The app also keeps photos and 3D views in their real colors; this demo darkens everything.</p>
+  </section>
+
+  <section id="how">
+    <h2>How it works</h2>
+    <ol class="steps">
+      <li><b>Capture.</b> Each window of the apps you choose is captured with Windows.Graphics.Capture. Nothing is injected into the app.</li>
+      <li><b>Flip lightness on the GPU.</b> Every pixel's lightness is flipped in OKLab while its hue stays, in well under a millisecond.</li>
+      <li><b>Show it on top.</b> A click-through layer, tied to the app's window, shows the result exactly over it. You use the app as always.</li>
+    </ol>
+  </section>
+
+  <section id="faq">
+    <h2>Questions</h2>
+    <details><summary>Windows says it protected my PC</summary><p>Deonyx isn't code-signed yet, so SmartScreen warns about it. Click <b>More info</b>, then <b>Run anyway</b>. The code is open on GitHub for anyone to check.</p></details>
+    <details><summary>Does it slow my PC down?</summary><p>Darkening a window takes well under a millisecond per frame on the GPU, and Deonyx only works while a window changes. On battery it can draw less often, or pause.</p></details>
+    <details><summary>Does it work on Windows 10?</summary><p>Yes, version 2004 or later. There it copies the screen instead of capturing each window, because Windows 10 draws a yellow border around captured windows.</p></details>
+    <details><summary>What about games and videos?</summary><p>Full screen games and videos are left alone, and photos and videos inside windows keep their real colors.</p></details>
+    <details><summary>Does it send anything anywhere?</summary><p>No. It only asks GitHub whether a new version is out and for the newest app presets, and you can turn that off.</p></details>
+    <details><summary>An app looks wrong. What now?</summary><p>Use "Why isn't a window dark?" in the settings, or copy the diagnostics and tell us on <a href="https://discord.gg/5Z6XRtKG2V">Discord</a> or in a <a href="https://github.com/fdeox/deonyx/issues">GitHub issue</a>.</p></details>
+  </section>
+
+  <section class="final">
+    <img class="gem small" src="assets/logo.svg" alt="">
+    <h2>Give your eyes a break.</h2>
+    <a class="button" href="https://github.com/fdeox/deonyx/releases/latest">Download Deonyx</a>
+  </section>
+
+  <footer>
+    <span>Deonyx is free software under the GPL-3.0, made by <a href="https://github.com/fdeox">fdeox</a>.</span>
+    <span><a href="https://github.com/fdeox/deonyx">GitHub</a> · <a href="https://discord.gg/5Z6XRtKG2V">Discord</a></span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
