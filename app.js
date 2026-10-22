@@ -1,5 +1,6 @@
 // The before/after slider, the newest version number, and "Try it": a
-// screenshot darkened in the browser with the same math as Deonyx.
+// screenshot darkened in the browser with the same math as Deonyx,
+// photos in it kept in their real colors the way the app finds them.
 
 // ---------- before / after
 const compare = document.getElementById("compare");
@@ -56,15 +57,31 @@ const LOOKS = { gray: [0.232, 0.894], black: [0.04, 0.894], soft: [0.34, 0.812] 
 let look = "gray";
 let source = null;
 let showOriginal = false;
+// Photos found in the source, in its pixels, and how much of it they cover.
+let kept = [];
+let keptShare = 0;
 
 const toLin = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
 const toSrgb = (c) => (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055);
+// sRGB byte to linear, worked out once.
+const LIN = Float32Array.from({ length: 256 }, (_, i) => toLin(i / 255));
 
-function darken(img) {
+function darken(img, mask) {
   const [lmin, lmax] = LOOKS[look];
   const d = img.data;
+  // Screenshots repeat a few thousand colors: each is worked out once.
+  const seen = new Map();
   for (let i = 0; i < d.length; i += 4) {
-    const r = toLin(d[i] / 255), g = toLin(d[i + 1] / 255), b = toLin(d[i + 2] / 255);
+    if (mask && mask[i >> 2]) continue;
+    const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
+    const done = seen.get(key);
+    if (done !== undefined) {
+      d[i] = done >> 16;
+      d[i + 1] = (done >> 8) & 255;
+      d[i + 2] = done & 255;
+      continue;
+    }
+    const r = LIN[d[i]], g = LIN[d[i + 1]], b = LIN[d[i + 2]];
     let l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
     let m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
     let s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
@@ -84,10 +101,157 @@ function darken(img) {
       -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
     ];
     for (let k = 0; k < 3; k++) d[i + k] = Math.round(255 * toSrgb(Math.min(1, Math.max(0, out[k]))));
+    seen.set(key, (d[i] << 16) | (d[i + 1] << 8) | d[i + 2]);
   }
   return img;
 }
 
+// ---------- photos, as the app finds them (shader.hlsl photo, photos.rs)
+// Every 4x4 block is rated: photo-like (neighbours differ, many in-between
+// tones), calm (not a flat fill) or flat. Photo-like blocks become
+// rectangles that grow over the calm blocks around them, and those
+// rectangles keep their real colors.
+const BLOCK = 4;
+
+function rateBlocks(img) {
+  const { width: W, height: H, data: d } = img;
+  const w = Math.floor(W / BLOCK), h = Math.floor(H / BLOCK);
+  const cells = new Uint8Array(w * h);
+  const light = new Float32Array(16);
+  const same = (i, j) => d[i] === d[j] && d[i + 1] === d[j + 1] && d[i + 2] === d[j + 2];
+  for (let by = 0; by < h; by++) {
+    for (let bx = 0; bx < w; bx++) {
+      let lo = 1, hi = 0, flat = 0, solid = 0;
+      for (let y = 0; y < 4; y++) {
+        for (let x = 0; x < 4; x++) {
+          const px = bx * 4 + x, py = by * 4 + y;
+          const i = (py * W + px) * 4;
+          const r = (py * W + Math.min(px + 1, W - 1)) * 4;
+          const dn = (Math.min(py + 1, H - 1) * W + px) * 4;
+          const sr = same(i, r), sd = same(i, dn);
+          flat += sr || sd ? 1 : 0;
+          solid += sr && sd ? 1 : 0;
+          const v = Math.cbrt(0.2126 * LIN[d[i]] + 0.7152 * LIN[d[i + 1]] + 0.0722 * LIN[d[i + 2]]);
+          light[y * 4 + x] = v;
+          lo = Math.min(lo, v);
+          hi = Math.max(hi, v);
+        }
+      }
+      const range = hi - lo;
+      let mid = 0;
+      for (let k = 0; k < 16; k++) mid += light[k] > lo + 0.2 * range && light[k] < hi - 0.2 * range ? 1 : 0;
+      cells[by * w + bx] = flat / 16 < 0.35 && mid / 16 >= 0.3 && range >= 0.05 ? 2 : solid / 16 < 0.5 ? 1 : 0;
+    }
+  }
+  return { cells, w, h };
+}
+
+function spread(src, w, h, n, grow) {
+  const pick = (a, b) => (grow ? a || b : a && b);
+  const rows = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let v = !grow;
+      for (let k = Math.max(0, x - n); k <= Math.min(w - 1, x + n); k++) v = pick(v, !!src[y * w + k]);
+      if (!grow && (x < n || x + n >= w)) v = false;
+      rows[y * w + x] = v ? 1 : 0;
+    }
+  }
+  const out = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let v = !grow;
+      for (let k = Math.max(0, y - n); k <= Math.min(h - 1, y + n); k++) v = pick(v, !!rows[k * w + x]);
+      if (!grow && (y < n || y + n >= h)) v = false;
+      out[y * w + x] = v ? 1 : 0;
+    }
+  }
+  return out;
+}
+
+// Rectangles in pixels of the rated image.
+function findPhotos({ cells, w, h }) {
+  const on = cells.map((c) => (c === 2 ? 1 : 0));
+  const calm = cells.map((c) => (c >= 1 ? 1 : 0));
+  const closed = spread(spread(on, w, h, 2, true), w, h, 2, false);
+  const seen = new Uint8Array(w * h);
+  const share = (grid, xa, ya, xb, yb) => {
+    let n = 0;
+    for (let y = ya; y <= yb; y++) for (let x = xa; x <= xb; x++) n += grid[y * w + x];
+    return n / ((xb - xa + 1) * (yb - ya + 1));
+  };
+  const found = [];
+  for (let start = 0; start < w * h; start++) {
+    if (!closed[start] || seen[start]) continue;
+    let x0 = w, y0 = h, x1 = 0, y1 = 0;
+    const stack = [start];
+    seen[start] = 1;
+    while (stack.length) {
+      const i = stack.pop();
+      const x = i % w, y = (i - x) / w;
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y);
+      for (const j of [x > 0 ? i - 1 : -1, x + 1 < w ? i + 1 : -1, y > 0 ? i - w : -1, y + 1 < h ? i + w : -1]) {
+        if (j >= 0 && closed[j] && !seen[j]) { seen[j] = 1; stack.push(j); }
+      }
+    }
+    while (y1 > y0 && share(on, x0, y0, x1, y0) < 0.25) y0++;
+    while (y1 > y0 && share(on, x0, y1, x1, y1) < 0.25) y1--;
+    while (x1 > x0 && share(on, x0, y0, x0, y1) < 0.25) x0++;
+    while (x1 > x0 && share(on, x1, y0, x1, y1) < 0.25) x1--;
+    if (x1 + 1 - x0 < 12 || y1 + 1 - y0 < 12 || share(on, x0, y0, x1, y1) < 0.3) continue;
+    while (y0 > 0 && share(calm, x0, y0 - 1, x1, y0 - 1) >= 0.6) y0--;
+    while (y1 + 1 < h && share(calm, x0, y1 + 1, x1, y1 + 1) >= 0.6) y1++;
+    while (x0 > 0 && share(calm, x0 - 1, y0, x0 - 1, y1) >= 0.6) x0--;
+    while (x1 + 1 < w && share(calm, x1 + 1, y0, x1 + 1, y1) >= 0.6) x1++;
+    for (let k = 0; k < 6; k++) {
+      if (y0 > 0 && share(calm, x0, y0 - 1, x1, y0 - 1) >= 0.3) y0--;
+      if (y1 + 1 < h && share(calm, x0, y1 + 1, x1, y1 + 1) >= 0.3) y1++;
+      if (x0 > 0 && share(calm, x0 - 1, y0, x0 - 1, y1) >= 0.3) x0--;
+      if (x1 + 1 < w && share(calm, x1 + 1, y0, x1 + 1, y1) >= 0.3) x1++;
+    }
+    found.push({ x: x0 * BLOCK, y: y0 * BLOCK, w: (x1 + 1 - x0) * BLOCK, h: (y1 + 1 - y0) * BLOCK });
+  }
+  return found;
+}
+
+// A whole picture that's a photo. Interfaces are made of a few flat colors:
+// their 32 most common colors cover most of the picture, even in a JPEG.
+// A photo spreads over thousands of them.
+function looksLikePhoto({ width: W, height: H, data: d }) {
+  const step = W * H > 2e6 ? 2 : 1;
+  const count = new Map();
+  let total = 0;
+  for (let y = 0; y < H; y += step) {
+    for (let x = 0; x < W; x += step) {
+      const i = (y * W + x) * 4;
+      const c = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
+      count.set(c, (count.get(c) || 0) + 1);
+      total++;
+    }
+  }
+  const top = [...count.values()].sort((a, b) => b - a).slice(0, 32).reduce((a, b) => a + b, 0);
+  return top / total < 0.5;
+}
+
+// Rated on the picture's own pixels: scaling would blur the flat interface.
+function findKept() {
+  const k = Math.min(1, 4096 / Math.max(source.width, source.height));
+  const c = document.createElement("canvas");
+  c.width = Math.round(source.width * k);
+  c.height = Math.round(source.height * k);
+  const x = c.getContext("2d", { willReadFrequently: true });
+  x.drawImage(source, 0, 0, c.width, c.height);
+  const pixels = x.getImageData(0, 0, c.width, c.height);
+  const rects = looksLikePhoto(pixels) ? [{ x: 0, y: 0, w: c.width, h: c.height }] : findPhotos(rateBlocks(pixels));
+  kept = rects.map((r) => ({ x: r.x / c.width, y: r.y / c.height, w: r.w / c.width, h: r.h / c.height }));
+  keptShare = Math.min(1, kept.reduce((a, r) => a + r.w * r.h, 0));
+  const note = document.getElementById("try-note");
+  if (keptShare > 0.6) note.textContent = "This looks like a photo, so Deonyx leaves it as it is. Try a screenshot of a light app.";
+  else if (kept.length) note.textContent = `Kept ${kept.length === 1 ? "1 photo" : `${kept.length} photos`} in real colors, like the app does.`;
+  else note.textContent = NOTE;
+}
+
+const NOTE = "Photos keep their real colors here too, like in the app. 3D views are found by the app itself.";
 const canvas = document.getElementById("out");
 const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
@@ -97,7 +261,14 @@ function draw() {
   canvas.width = Math.round(source.width * scale);
   canvas.height = Math.round(source.height * scale);
   ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
-  if (!showOriginal) ctx.putImageData(darken(ctx.getImageData(0, 0, canvas.width, canvas.height)), 0, 0);
+  if (showOriginal) return;
+  const W = canvas.width, H = canvas.height;
+  const mask = new Uint8Array(W * H);
+  for (const r of kept) {
+    const x0 = Math.floor(r.x * W), y0 = Math.floor(r.y * H), x1 = Math.ceil((r.x + r.w) * W), y1 = Math.ceil((r.y + r.h) * H);
+    for (let y = y0; y < y1; y++) mask.fill(1, y * W + x0, y * W + x1);
+  }
+  ctx.putImageData(darken(ctx.getImageData(0, 0, W, H), mask), 0, 0);
 }
 
 function load(file) {
@@ -105,6 +276,7 @@ function load(file) {
   const img = new Image();
   img.onload = () => {
     source = img;
+    findKept();
     document.getElementById("drop-text").hidden = true;
     canvas.hidden = false;
     document.getElementById("try-tools").hidden = false;
