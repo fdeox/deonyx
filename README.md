@@ -72,7 +72,7 @@ Deonyx is free, and it does it properly.
 
 <img src="assets/screenshots/installer.png" width="360" align="right" alt="The Deonyx installer">
 
-Download `Deonyx_..._x64-setup.exe` from the [latest release](https://github.com/fdeox/deonyx/releases/latest) and run it. It installs for your user only, without administrator rights. Deonyx needs Windows 11, or Windows 10 version 2004 or later. On Windows 10 it copies the screen instead of capturing each window, because Windows 10 draws a yellow border around every captured window.
+Download `Deonyx_..._x64-setup.exe` from the [latest release](https://github.com/fdeox/deonyx/releases/latest) and run it. It installs for your user only, without administrator rights. On a Windows on ARM PC, try the experimental `Deonyx_..._arm64-setup.exe`. Deonyx needs Windows 11, or Windows 10 version 2004 or later. On Windows 10 it copies the screen instead of capturing each window, because Windows 10 draws a yellow border around every captured window.
 
 Deonyx isn't code-signed, so Windows SmartScreen may say it protected your PC. Click **More info**, then **Run anyway**.
 
