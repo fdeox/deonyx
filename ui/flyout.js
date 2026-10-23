@@ -5,6 +5,9 @@ const { listen } = window.__TAURI__.event;
 
 let config = null;
 let status = {};
+// A new version, once found: shown with a button that installs it.
+let update = null;
+let updating = false;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const hhmm = (secs) => new Date(secs * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -35,6 +38,12 @@ function render() {
     else sub = t("master.none");
   }
   $("sub").textContent = sub;
+  $("update-bar").hidden = !update;
+  if (update) {
+    $("update-text").textContent = t("update.ready", { v: update });
+    $("update-now").textContent = updating ? t("update.installing") : t("update.install");
+    $("update-now").disabled = updating;
+  }
   const paused = status.paused;
   $("pause").textContent = paused ? t("pause.resume") : t("flyout.pause");
   $("pause").disabled = !config.enabled;
@@ -81,6 +90,17 @@ $("apps").addEventListener("change", (e) => {
   save();
 });
 $("settings").addEventListener("click", () => invoke("open_settings_cmd"));
+$("update-now").addEventListener("click", async () => {
+  updating = true;
+  render();
+  try {
+    await invoke("install_update");
+  } catch {
+    updating = false;
+    render();
+    $("update-text").textContent = t("general.updates.failed");
+  }
+});
 
 // Gone as soon as the user looks elsewhere, like Windows' own tray windows.
 // Windows may hand the focus over and take it back at once while showing
@@ -99,6 +119,7 @@ async function load() {
   const s = await invoke("get_state");
   config = s.config;
   status = s.status;
+  update = s.update || null;
   LANG = STRINGS[s.lang] ? s.lang : "en";
   render();
 }
@@ -111,6 +132,10 @@ listen("flyout-open", () => {
 listen("status", (e) => {
   status = e.payload;
   if (config) config.enabled = status.enabled;
+  render();
+});
+listen("update", (e) => {
+  update = e.payload;
   render();
 });
 listen("config", (e) => {

@@ -64,7 +64,7 @@ Deonyx is free, and it does it properly.
 - **Run as administrator** to darken apps like Task Manager. Normal apps are still darkened without administrator rights, so tools like AutoHotkey keep working in them.
 - **Start with Windows** and wait quietly in the tray.
 - **13 languages:** English, Türkçe, Deutsch, Français, Español, Italiano, Português, Nederlands, Русский, Українська, 日本語, 한국어 and 简体中文.
-- **Updates itself** when a new version is out, and brings a "Copy diagnostics" button for bug reports. If something fails, Deonyx gets back up by itself and keeps a report you can send.
+- **Tells you when a new version is out** with a green dot on the tray icon, and updates in one click. It also brings a "Copy diagnostics" button for bug reports. If something fails, Deonyx gets back up by itself and keeps a report you can send.
 
 <br clear="right">
 

@@ -72,23 +72,23 @@ struct Snapshot {
 }
 
 /// Tray texts, in the settings' language: the switch, Settings, Quit, the
-/// tooltip when on and off, pause for an hour, resume, the app list and the
-/// profiles.
-fn words(lang: &str) -> [&'static str; 9] {
+/// tooltip when on and off, pause for an hour, resume, the app list, the
+/// profiles, updating to a new version ({v}) and its tooltip.
+fn words(lang: &str) -> [&'static str; 11] {
     match lang {
-        "tr" => ["Uygulamaları karart", "Ayarlar", "Deonyx'ten çık", "Deonyx: açık", "Deonyx: kapalı", "1 saat duraklat", "Devam et", "Uygulamalar", "Profiller"],
-        "de" => ["Apps abdunkeln", "Einstellungen", "Deonyx beenden", "Deonyx: an", "Deonyx: aus", "1 Stunde pausieren", "Fortsetzen", "Apps", "Profile"],
-        "fr" => ["Assombrir les applis", "Paramètres", "Quitter Deonyx", "Deonyx : activé", "Deonyx : désactivé", "Pause d'une heure", "Reprendre", "Applis", "Profils"],
-        "es" => ["Oscurecer apps", "Ajustes", "Salir de Deonyx", "Deonyx: activado", "Deonyx: desactivado", "Pausar 1 hora", "Reanudar", "Apps", "Perfiles"],
-        "it" => ["Scurisci le app", "Impostazioni", "Esci da Deonyx", "Deonyx: attivo", "Deonyx: disattivato", "Pausa di 1 ora", "Riprendi", "App", "Profili"],
-        "pt" => ["Escurecer apps", "Configurações", "Sair do Deonyx", "Deonyx: ligado", "Deonyx: desligado", "Pausar por 1 hora", "Retomar", "Apps", "Perfis"],
-        "ru" => ["Затемнять приложения", "Настройки", "Выйти из Deonyx", "Deonyx: вкл.", "Deonyx: выкл.", "Пауза на 1 час", "Продолжить", "Приложения", "Профили"],
-        "uk" => ["Затемнювати застосунки", "Налаштування", "Вийти з Deonyx", "Deonyx: увімк.", "Deonyx: вимк.", "Пауза на 1 годину", "Продовжити", "Застосунки", "Профілі"],
-        "nl" => ["Apps donker maken", "Instellingen", "Deonyx afsluiten", "Deonyx: aan", "Deonyx: uit", "1 uur pauzeren", "Hervatten", "Apps", "Profielen"],
-        "ja" => ["アプリを暗くする", "設定", "Deonyx を終了", "Deonyx: オン", "Deonyx: オフ", "1 時間一時停止", "再開", "アプリ", "プロファイル"],
-        "ko" => ["앱 어둡게 하기", "설정", "Deonyx 종료", "Deonyx: 켜짐", "Deonyx: 꺼짐", "1시간 일시 중지", "다시 시작", "앱", "프로필"],
-        "zh" => ["调暗应用", "设置", "退出 Deonyx", "Deonyx：开", "Deonyx：关", "暂停 1 小时", "继续", "应用", "配置文件"],
-        _ => ["Darken apps", "Settings", "Quit Deonyx", "Deonyx: on", "Deonyx: off", "Pause for 1 hour", "Resume", "Apps", "Profiles"],
+        "tr" => ["Uygulamaları karart", "Ayarlar", "Deonyx'ten çık", "Deonyx: açık", "Deonyx: kapalı", "1 saat duraklat", "Devam et", "Uygulamalar", "Profiller", "{v} sürümüne güncelle", "Deonyx: güncelleme hazır"],
+        "de" => ["Apps abdunkeln", "Einstellungen", "Deonyx beenden", "Deonyx: an", "Deonyx: aus", "1 Stunde pausieren", "Fortsetzen", "Apps", "Profile", "Auf {v} aktualisieren", "Deonyx: Update bereit"],
+        "fr" => ["Assombrir les applis", "Paramètres", "Quitter Deonyx", "Deonyx : activé", "Deonyx : désactivé", "Pause d'une heure", "Reprendre", "Applis", "Profils", "Mettre à jour vers {v}", "Deonyx : mise à jour prête"],
+        "es" => ["Oscurecer apps", "Ajustes", "Salir de Deonyx", "Deonyx: activado", "Deonyx: desactivado", "Pausar 1 hora", "Reanudar", "Apps", "Perfiles", "Actualizar a {v}", "Deonyx: actualización lista"],
+        "it" => ["Scurisci le app", "Impostazioni", "Esci da Deonyx", "Deonyx: attivo", "Deonyx: disattivato", "Pausa di 1 ora", "Riprendi", "App", "Profili", "Aggiorna a {v}", "Deonyx: aggiornamento pronto"],
+        "pt" => ["Escurecer apps", "Configurações", "Sair do Deonyx", "Deonyx: ligado", "Deonyx: desligado", "Pausar por 1 hora", "Retomar", "Apps", "Perfis", "Atualizar para {v}", "Deonyx: atualização pronta"],
+        "ru" => ["Затемнять приложения", "Настройки", "Выйти из Deonyx", "Deonyx: вкл.", "Deonyx: выкл.", "Пауза на 1 час", "Продолжить", "Приложения", "Профили", "Обновить до {v}", "Deonyx: обновление готово"],
+        "uk" => ["Затемнювати застосунки", "Налаштування", "Вийти з Deonyx", "Deonyx: увімк.", "Deonyx: вимк.", "Пауза на 1 годину", "Продовжити", "Застосунки", "Профілі", "Оновити до {v}", "Deonyx: оновлення готове"],
+        "nl" => ["Apps donker maken", "Instellingen", "Deonyx afsluiten", "Deonyx: aan", "Deonyx: uit", "1 uur pauzeren", "Hervatten", "Apps", "Profielen", "Bijwerken naar {v}", "Deonyx: update klaar"],
+        "ja" => ["アプリを暗くする", "設定", "Deonyx を終了", "Deonyx: オン", "Deonyx: オフ", "1 時間一時停止", "再開", "アプリ", "プロファイル", "{v} に更新", "Deonyx: 更新の準備ができました"],
+        "ko" => ["앱 어둡게 하기", "설정", "Deonyx 종료", "Deonyx: 켜짐", "Deonyx: 꺼짐", "1시간 일시 중지", "다시 시작", "앱", "프로필", "{v}(으)로 업데이트", "Deonyx: 업데이트 준비됨"],
+        "zh" => ["调暗应用", "设置", "退出 Deonyx", "Deonyx：开", "Deonyx：关", "暂停 1 小时", "继续", "应用", "配置文件", "更新到 {v}", "Deonyx：更新已就绪"],
+        _ => ["Darken apps", "Settings", "Quit Deonyx", "Deonyx: on", "Deonyx: off", "Pause for 1 hour", "Resume", "Apps", "Profiles", "Update to {v}", "Deonyx: update ready"],
     }
 }
 
@@ -453,6 +453,7 @@ async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
     let found = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
     let version = found.map(|u| u.version);
     *app.state::<State>().update.lock().unwrap() = version.clone();
+    show_update(&app);
     Ok(version)
 }
 
@@ -460,6 +461,13 @@ async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
 /// restarts Deonyx.
 #[tauri::command]
 async fn install_update(app: AppHandle) -> Result<(), String> {
+    if testing() {
+        if let Ok(v) = std::env::var("DEONYX_UPDATE_TEST") {
+            note!("update test: would install {v}");
+            let _ = app.emit("update-test-install", &v);
+            return Ok(());
+        }
+    }
     let Some(update) = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())? else {
         return Err("no update".into());
     };
@@ -656,8 +664,8 @@ fn on_status(app: &AppHandle, st: Status) {
             refresh_tray(app, &c);
         }
         if let Some(tray) = app.tray_by_id("main") {
-            let w = words(s.cfg.lock().unwrap().lang());
-            let _ = tray.set_tooltip(Some(if st.enabled && !st.paused && st.paused_by.is_empty() { w[3] } else { w[4] }));
+            let cfg = s.cfg.lock().unwrap().clone();
+            let _ = tray.set_tooltip(Some(tooltip(app, &cfg)));
         }
     }
     let _ = app.emit("status", &st);
@@ -800,7 +808,14 @@ fn tray_menu(app: &AppHandle, cfg: &Config) -> tauri::Result<Menu<Wry>> {
     let quit = MenuItem::with_id(app, "quit", w[2], true, None::<&str>)?;
     let sep = PredefinedMenuItem::separator(app)?;
     let sep2 = PredefinedMenuItem::separator(app)?;
-    let mut items: Vec<&dyn IsMenuItem<Wry>> = vec![&toggle, &pause, &apps];
+    let version = app.try_state::<State>().and_then(|s| s.update.lock().unwrap().clone());
+    let update = MenuItem::with_id(app, "update", w[9].replace("{v}", version.as_deref().unwrap_or("")), true, None::<&str>)?;
+    let sep0 = PredefinedMenuItem::separator(app)?;
+    let mut items: Vec<&dyn IsMenuItem<Wry>> = Vec::new();
+    if version.is_some() {
+        items.extend([&update as &dyn IsMenuItem<Wry>, &sep0]);
+    }
+    items.extend([&toggle as &dyn IsMenuItem<Wry>, &pause, &apps]);
     if !profiles.is_empty() {
         items.push(&profile_menu);
     }
@@ -811,8 +826,68 @@ fn tray_menu(app: &AppHandle, cfg: &Config) -> tauri::Result<Menu<Wry>> {
 fn refresh_tray(app: &AppHandle, cfg: &Config) {
     if let (Some(tray), Ok(menu)) = (app.tray_by_id("main"), tray_menu(app, cfg)) {
         let _ = tray.set_menu(Some(menu));
+        let _ = tray.set_tooltip(Some(tooltip(app, cfg)));
     }
 }
+
+/// What the tray icon says on hover: a waiting update first, else on or off.
+fn tooltip(app: &AppHandle, cfg: &Config) -> &'static str {
+    let w = words(cfg.lang());
+    let Some(s) = app.try_state::<State>() else { return if cfg.enabled { w[3] } else { w[4] } };
+    if s.update.lock().unwrap().is_some() {
+        return w[10];
+    }
+    let st = s.status.lock().unwrap();
+    if st.enabled && !st.paused && st.paused_by.is_empty() {
+        w[3]
+    } else {
+        w[4]
+    }
+}
+
+const TRAY: &[u8] = include_bytes!("../icons/tray.png");
+/// The same gem with a green dot: a new version waits.
+const TRAY_UPDATE: &[u8] = include_bytes!("../icons/tray-update.png");
+
+/// A new version was found: the tray gets its dot, menu item and tooltip,
+/// and open windows their banner. Installing waits for the user's click.
+fn show_update(app: &AppHandle) {
+    let Some(s) = app.try_state::<State>() else { return };
+    let version = s.update.lock().unwrap().clone();
+    let cfg = s.cfg.lock().unwrap().clone();
+    refresh_tray(app, &cfg);
+    if let Some(tray) = app.tray_by_id("main") {
+        if let Ok(icon) = Image::from_bytes(if version.is_some() { TRAY_UPDATE } else { TRAY }) {
+            let _ = tray.set_icon(Some(icon));
+        }
+    }
+    if let Some(v) = version {
+        let _ = app.emit("update", &v);
+    }
+}
+
+/// Looks for a new version a little after starting and then every few
+/// hours, for as long as updates are on in the settings.
+fn watch_updates(app: &AppHandle) {
+    let h = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio_sleep(10).await;
+        loop {
+            let on = h.state::<State>().cfg.lock().unwrap().updates;
+            if on && h.state::<State>().update.lock().unwrap().is_none() {
+                match check_update(h.clone()).await {
+                    Ok(Some(v)) => note!("Deonyx {v} is ready"),
+                    Ok(None) => {}
+                    Err(e) => note!("update check: {e}"),
+                }
+            }
+            tokio_sleep(UPDATE_EVERY).await;
+        }
+    });
+}
+
+/// Seconds between looks for a new version.
+const UPDATE_EVERY: u64 = 6 * 60 * 60;
 
 fn on_menu(app: &AppHandle, id: &str) {
     let c = app.state::<State>().cfg.lock().unwrap().clone();
@@ -821,6 +896,14 @@ fn on_menu(app: &AppHandle, id: &str) {
         "pause" => pause(app.clone(), 60),
         "resume" => pause(app.clone(), 0),
         "settings" => open_settings(app),
+        "update" => {
+            let a = app.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = install_update(a).await {
+                    note!("update failed: {e}");
+                }
+            });
+        }
         "quit" => {
             app.state::<State>().engine.send(Cmd::Quit);
             app.exit(0);
@@ -845,7 +928,7 @@ fn on_menu(app: &AppHandle, id: &str) {
 fn build_tray(app: &AppHandle, cfg: &Config) -> tauri::Result<()> {
     let w = words(cfg.lang());
     TrayIconBuilder::with_id("main")
-        .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
+        .icon(Image::from_bytes(TRAY)?)
         .tooltip(if cfg.enabled { w[3] } else { w[4] })
         .menu(&tray_menu(app, cfg)?)
         .show_menu_on_left_click(false)
@@ -983,13 +1066,18 @@ fn main() {
                         let _ = h.emit("presets", &list);
                     }
                 });
-                let h = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    tokio_sleep(10).await;
-                    if let Ok(Some(v)) = check_update(h.clone()).await {
-                        let _ = h.emit("update", &v);
-                    }
-                });
+                watch_updates(app.handle());
+            }
+            // Test copies can pretend a new version is out.
+            if testing {
+                if let Ok(v) = std::env::var("DEONYX_UPDATE_TEST") {
+                    let h = app.handle().clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        *h.state::<State>().update.lock().unwrap() = Some(v);
+                        show_update(&h);
+                    });
+                }
             }
             Ok(())
         })

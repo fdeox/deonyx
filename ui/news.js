@@ -2,6 +2,16 @@
 // languages show the English list.
 
 const NEWS = {
+  "0.2.2": {
+    en: [
+      "Deonyx tells you when a new version is out: a green dot on the tray icon, and Update at the top of the tray menu and the tray window. One click installs it.",
+      "It looks for new versions every few hours, not only when it starts.",
+    ],
+    tr: [
+      "Yeni sürüm çıkınca Deonyx haber veriyor: tepsi simgesinde yeşil bir nokta, tepsi menüsünün ve tepsi penceresinin en üstünde Güncelle. Tek tıkla kuruluyor.",
+      "Yeni sürümlere sadece açılışta değil, birkaç saatte bir bakıyor.",
+    ],
+  },
   "0.2.1": {
     en: [
       "Settings in pages with a side menu: Apps, Look, When, Profiles, Tools, General and Advanced.",
