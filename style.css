@@ -156,6 +156,30 @@ nav {
 .grid article:hover { border-color: #8b7cf677; transform: translateY(-2px); }
 .grid h3 { margin: 0 0 6px; font-size: 18px; }
 .grid p { margin: 0; color: var(--muted); font-size: 15.5px; }
+/* The rest of the features, folded away. */
+.more { margin-top: 18px; text-align: center; }
+.more summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  color: var(--text);
+  border: 1px solid #8b7cf666;
+  border-radius: 999px;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 600;
+}
+.more summary::-webkit-details-marker { display: none; }
+.more summary::after { content: ""; width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: translateY(-2px) rotate(45deg); transition: transform 0.2s; }
+.more[open] summary::after { transform: translateY(2px) rotate(225deg); }
+.more summary:hover { border-color: #8b7cf6; }
+.more .open, .more[open] .closed { display: none; }
+.more[open] .open { display: inline; }
+.grid.small { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 20px; text-align: left; }
+.grid.small article { padding: 16px 18px; }
+.grid.small h3 { font-size: 16px; }
+.grid.small p { font-size: 14px; }
 
 /* try it */
 .drop {
@@ -236,3 +260,24 @@ footer {
   border: 1px solid var(--line);
   box-shadow: 0 24px 60px #000b;
 }
+
+/* article pages (sketchup-dark-mode/, dark-mode-for-any-app/) */
+.article { max-width: 820px; margin: 0 auto; padding: 56px 24px 24px; }
+.article h1 { font-size: clamp(30px, 4vw, 44px); line-height: 1.15; margin: 0 0 16px; }
+.article .lead { margin: 0 0 30px; text-align: left; }
+.article h2 { font-size: 24px; margin: 44px 0 12px; }
+.article p { color: var(--muted); line-height: 1.65; }
+.article .steps { margin-left: 0; }
+.article details { margin: 10px 0; padding: 14px 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+.article summary { cursor: pointer; font-weight: 600; }
+.article details p { margin: 10px 0 0; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 10px 0 8px; }
+.pair figure { margin: 0; }
+.pair img { width: 100%; display: block; border-radius: 12px; border: 1px solid var(--line); }
+.pair figcaption { text-align: center; color: var(--muted); font-size: 14px; margin-top: 8px; }
+@media (max-width: 640px) { .pair { grid-template-columns: 1fr; } }
+.table { overflow-x: auto; }
+.table table { width: 100%; border-collapse: collapse; }
+.table td, .table th { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--muted); }
+.table td b { color: var(--text); }
+.article-cta { margin-top: 44px; }

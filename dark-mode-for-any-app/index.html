@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dark mode for any Windows app, even without one | Deonyx</title>
+  <meta name="description" content="Windows dark mode only reaches apps that support it. Deonyx darkens the rest without inverting colors: old programs, design tools, utilities. Free.">
+  <link rel="canonical" href="https://fdeox.github.io/deonyx/dark-mode-for-any-app/">
+  <meta property="og:title" content="Dark mode for any Windows app, even without one | Deonyx">
+  <meta property="og:description" content="Windows dark mode only reaches apps that support it. Deonyx darkens the rest without inverting colors: old programs, design tools, utilities. Free.">
+  <meta property="og:image" content="https://fdeox.github.io/deonyx/assets/social.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="../assets/logo.svg">
+  <link rel="stylesheet" href="../style.css">
+</head>
+<body>
+  <nav>
+    <a class="brand" href="../"><img src="../assets/logo.svg" alt=""> Deonyx</a>
+    <span class="links">
+      <a href="../#features">Features</a>
+      <a href="../#faq">FAQ</a>
+      <a href="https://github.com/fdeox/deonyx">GitHub</a>
+      <a class="button small" href="https://github.com/fdeox/deonyx/releases/latest">Download</a>
+    </span>
+  </nav>
+
+  <main class="article">
+    <h1>Dark mode for any Windows app</h1>
+    <p class="lead">Windows' dark mode only reaches the apps that support it. Deonyx darkens the rest: older programs, design tools, utilities, anything with a light window, without turning colors upside down.</p>
+    <h2>The usual ways, and where they fall short</h2>
+    <div class="table">
+      <table>
+        <tr><th></th><th>What happens</th></tr>
+        <tr><td><b>Windows dark mode</b></td><td>Only apps that were built for it follow it. The rest stay white.</td></tr>
+        <tr><td><b>Color filters (invert)</b></td><td>Everything goes dark, but colors flip too: red becomes cyan, photos look like negatives.</td></tr>
+        <tr><td><b>High contrast themes</b></td><td>The whole system changes its look, and many apps don't draw well with them.</td></tr>
+        <tr><td><b>Deonyx</b></td><td>Only lightness flips. Colors, photos and 3D views stay true, and you pick which apps.</td></tr>
+      </table>
+    </div>
+    <div class="pair">
+      <figure><img src="../assets/before.webp" alt="SketchUp on Windows as it comes, light" loading="lazy"><figcaption>Without Deonyx</figcaption></figure>
+      <figure><img src="../assets/after.webp" alt="SketchUp with Deonyx, dark, the 3D view in its real colors" loading="lazy"><figcaption>With Deonyx</figcaption></figure>
+    </div>
+
+    <h2>How it works</h2>
+    <ol class="steps">
+      <li><b>Capture.</b> Each window of the apps you choose is captured with Windows.Graphics.Capture. Nothing is injected into them.</li>
+      <li><b>Flip lightness, keep color.</b> Every pixel's lightness is flipped on the graphics card in OKLab, while its hue stays.</li>
+      <li><b>Show it on top.</b> A click-through layer tied to the app's window shows the result right over it. You use the app as always, with no white flash when you switch.</li>
+    </ol>
+
+    <h2>Made to live with</h2>
+    <p>Pick your apps or darken every light window. Choose Gray, Black for OLED, Soft or warm Paper, darken only at night or from sunset to sunrise, keep profiles like Day and Night, and switch it all with a hotkey, from the tray, the command line or a Stream Deck key.</p>
+
+    <h2>Questions</h2>
+    <details><summary>Does it work on Windows 10?</summary><p>Yes, on version 2004 or later, and on Windows 11.</p></details>
+    <details><summary>What about games and videos?</summary><p>Full screen games and videos are left alone, and photos and videos inside windows keep their real colors.</p></details>
+    <details><summary>Can it darken Task Manager and other admin apps?</summary><p>Yes, with <b>Run as administrator</b> in its settings. Normal apps keep working with tools like AutoHotkey.</p></details>
+    <details><summary>Does it send anything anywhere?</summary><p>No. It only asks GitHub whether a new version is out, and you can turn that off.</p></details>
+
+    <div class="cta article-cta">
+      <a class="button" href="https://github.com/fdeox/deonyx/releases/latest">Download Deonyx for Windows</a>
+      <a class="button ghost" href="../">See everything it does</a>
+    </div>
+    <p class="fine">Free and open source (GPL-3.0). Windows 10 and 11. Nothing you see leaves your PC.</p>
+  </main>
+
+  <footer>
+    <span>Deonyx is free software under the GPL-3.0, made by <a href="https://github.com/fdeox">fdeox</a>.</span>
+    <span><a href="../">Home</a> · <a href="https://github.com/fdeox/deonyx">GitHub</a> · <a href="https://discord.gg/5Z6XRtKG2V">Discord</a></span>
+  </footer>
+</body>
+</html>
