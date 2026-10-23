@@ -27,7 +27,7 @@ html, body {
 }
 
 main {
-  max-width: 760px;
+  max-width: 980px;
   margin: 0 auto;
   padding: 28px 28px 20px;
 }
@@ -118,6 +118,39 @@ button.danger:hover { border-color: #f0848a55; }
 .switch.big::after { width: 22px; height: 22px; }
 .switch.big:checked::after { transform: translateX(24px); }
 
+/* side menu and pages */
+.layout { display: grid; grid-template-columns: 172px minmax(0, 1fr); gap: 28px; align-items: start; margin-top: 22px; }
+.side { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 2px; }
+.side button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  text-align: left;
+  color: var(--muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 9px;
+}
+.side button:hover { color: var(--text); background: var(--panel); border-color: transparent; }
+.side button.on { color: var(--text); background: var(--accent-bg); }
+.side svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.side svg .fill { fill: currentColor; stroke: none; }
+.side button.on svg { color: var(--accent-2); }
+.side .mark { margin-left: auto; width: 7px; height: 7px; border-radius: 50%; background: var(--accent-2); }
+.page:not(.on) { display: none; }
+.page > section:first-child { margin-top: 0; }
+.pages footer { margin-top: 32px; }
+@media (max-width: 760px) {
+  .layout { grid-template-columns: 136px minmax(0, 1fr); gap: 18px; }
+  .side button { padding: 7px 9px; gap: 8px; font-size: 13px; }
+}
+
+/* the look, on a sample window */
+.preview-row { align-items: center; }
+#preview { width: 280px; height: 160px; flex: none; border-radius: 10px; border: 1px solid var(--line-2); }
+@media (max-width: 760px) { #preview { width: 220px; height: 126px; } }
+
 /* sections */
 section { margin-top: 28px; }
 .section-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
@@ -135,6 +168,11 @@ section > h2 { margin-bottom: 12px; }
   border-radius: var(--radius);
 }
 label.row { cursor: pointer; }
+/* In a narrow window a row's controls move under its text instead of
+   squeezing it into a thin column. */
+.row, .banner { flex-wrap: wrap; }
+.row > span:first-child, .banner > span:first-child { flex: 1 1 240px; min-width: 0; }
+.row:not(.column) > :last-child:not(:first-child), .banner > :last-child:not(:first-child) { margin-left: auto; }
 
 /* app cards */
 .app {
@@ -263,7 +301,9 @@ select:focus, input[type="time"]:focus { border-color: var(--accent); }
 
 .app-head.flat { cursor: default; }
 .app-head.flat:hover { background: none; }
-.empty.small { padding: 16px; font-size: 13px; }
+/* Lists that are empty for now: one quiet line, not a box. */
+.empty.small { padding: 2px 2px 0; font-size: 13px; text-align: left; border: none; }
+.quiet-banner { margin: 0 0 10px; padding: 10px 14px; }
 
 .result {
   display: flex;

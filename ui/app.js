@@ -31,7 +31,15 @@ const presetOf = (exe) => presets.find((p) => p.exe === key(exe));
 let saveTimer = 0;
 function save() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => invoke("set_config", { config }).catch((e) => console.error(e)), 120);
+  saveTimer = setTimeout(() => invoke("set_config", { config }).then(checkProfile).catch((e) => console.error(e)), 120);
+}
+
+// The settings differ from the profile in use (asked from Deonyx after each
+// change): offer to save them into it, or to go back.
+let profileChanged = false;
+async function checkProfile() {
+  profileChanged = !!config.profile && (await invoke("profile_changed").catch(() => false));
+  renderProfiles();
 }
 
 let toastTimer = 0;
@@ -484,13 +492,19 @@ let deleting = "";
 
 function renderProfiles() {
   const list = config.profiles || [];
+  const changed = profileChanged && list.some((p) => p.name === config.profile);
+  $("profile-changed").hidden = !changed;
+  if (changed) $("profile-changed-text").textContent = t("profiles.changed", { name: config.profile });
+  const nav = document.querySelector('#side button[data-page="profiles"]');
+  nav.querySelector(".mark")?.remove();
+  if (changed) nav.insertAdjacentHTML("beforeend", '<i class="mark"></i>');
   if (!list.length) {
     $("profiles").innerHTML = `<div class="empty small">${esc(t("profiles.empty"))}</div>`;
     return;
   }
   $("profiles").innerHTML = list.map((p, i) => `
     <span class="chip ${p.name === config.profile ? "on" : ""}" data-i="${i}">
-      <button data-act="use" title="${esc(t("profiles.use"))}">${esc(p.name)}</button>
+      <button data-act="use" title="${esc(t("profiles.use"))}">${esc(p.name)}${changed && p.name === config.profile ? " •" : ""}</button>
       <button data-act="delete" class="${deleting === p.name ? "sure" : ""}" aria-label="${esc(t("profiles.delete"))}">${deleting === p.name ? esc(t("profiles.delete")) : "&#215;"}</button>
     </span>`).join("");
 }
@@ -535,8 +549,176 @@ $("profile-form").addEventListener("submit", async (e) => {
   $("profile-form").hidden = true;
   toast(t("profiles.saved", { name }));
 });
+$("profile-update").addEventListener("click", async () => {
+  await invoke("save_profile", { name: config.profile });
+  toast(t("profiles.saved", { name: config.profile }));
+  checkProfile();
+});
+$("profile-undo").addEventListener("click", () => invoke("use_profile", { name: config.profile }));
 $("profile-name").addEventListener("keydown", (e) => {
   if (e.key === "Escape") $("profile-form").hidden = true;
+});
+
+// ---------- the look, on a sample window
+// A light app drawn here, its right half shown the way Deonyx would show it:
+// the same steps as shader.hlsl, with an app's default darkness and text.
+
+const LIN = Float32Array.from({ length: 256 }, (_, i) => {
+  const c = i / 255;
+  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+});
+const toSrgb = (c) => (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055);
+
+// config.rs AppRule::lightness, darkness 0.6 and text 0.7.
+function lightness(style) {
+  const d = 0.6, t = 0.7;
+  if (style === "black") return [0.1 * (1 - d), 0.74 + 0.22 * t];
+  if (style === "soft") return [0.46 - 0.2 * d, 0.7 + 0.16 * t];
+  if (style === "paper") return [0.4 - 0.18 * d, 0.66 + 0.14 * t];
+  return [0.4 - 0.28 * d, 0.74 + 0.22 * t];
+}
+
+function flip(img, skip) {
+  const style = config.style || "gray";
+  const [lmin, lmax] = lightness(style);
+  const warm = style === "paper" ? Math.max(config.warm || 0, 0.55) : config.warm || 0;
+  const boost = config.readable !== false ? 0.78 : 1;
+  const tint = [1, 1 - 0.14 * warm, 1 - 0.32 * warm];
+  const d = img.data;
+  const seen = new Map();
+  for (let i = 0; i < d.length; i += 4) {
+    const p = i >> 2;
+    if (skip(p % img.width, (p / img.width) | 0)) continue;
+    const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
+    const done = seen.get(key);
+    if (done !== undefined) {
+      d[i] = done >> 16;
+      d[i + 1] = (done >> 8) & 255;
+      d[i + 2] = done & 255;
+      continue;
+    }
+    const r = LIN[d[i]], g = LIN[d[i + 1]], b = LIN[d[i + 2]];
+    let l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+    let m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    let s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    const L = 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s;
+    let A = 1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s;
+    let B = 0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s;
+    let t = Math.min(1, Math.max(0, 1 - L));
+    if (boost < 1) t = t ** boost;
+    const L2 = lmin + t * (lmax - lmin);
+    const keep = 0.95 * Math.min(1, L2 / Math.max(L, 0.001)) ** 0.8;
+    A *= keep;
+    B *= keep;
+    l = (L2 + 0.3963377774 * A + 0.2158037573 * B) ** 3;
+    m = (L2 - 0.1055613458 * A - 0.0638541728 * B) ** 3;
+    s = (L2 - 0.0894841775 * A - 1.291485548 * B) ** 3;
+    const out = [
+      4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+      -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+      -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+    ];
+    for (let k = 0; k < 3; k++) d[i + k] = Math.round(255 * toSrgb(Math.min(1, Math.max(0, out[k]))) * tint[k]);
+    seen.set(key, (d[i] << 16) | (d[i + 1] << 8) | d[i + 2]);
+  }
+}
+
+// The sample: title bar, toolbar, a list, text (one line faint), a button
+// and a photo. Returns the photo's box, which Deonyx keeps as it is.
+function drawSample(ctx, W, H) {
+  const box = (x, y, w, h, c, r = 0) => {
+    ctx.fillStyle = c;
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, r);
+    ctx.fill();
+  };
+  box(0, 0, W, H, "#ffffff");
+  box(0, 0, W, 30, "#f1f2f4");
+  box(14, 11, 70, 8, "#5f6368", 4);
+  for (const x of [W - 70, W - 46, W - 22]) box(x, 14, 10, 2, "#5f6368");
+  box(0, 30, W, 38, "#fafafa");
+  box(0, 67, W, 1, "#e3e5e8");
+  ["#1a73e8", "#e8453c", "#34a853", "#f9ab00", "#9aa0a6", "#9aa0a6"].forEach((c, i) => box(14 + i * 30, 39, 20, 20, c, 5));
+  box(0, 68, 130, H - 68, "#f4f5f7");
+  box(130, 68, 1, H - 68, "#e3e5e8");
+  box(8, 84, 114, 22, "#dbe7fd", 6);
+  box(18, 92, 70, 6, "#1a73e8", 3);
+  [118, 142, 166, 190, 214].forEach((y, i) => box(18, y, 60 + ((i * 23) % 40), 6, "#80868b", 3));
+  box(152, 86, 190, 12, "#202124", 6);
+  [112, 128, 144, 160].forEach((y, i) => box(152, y, [250, 230, 244, 190][i], 7, "#3c4043", 3.5));
+  box(152, 182, 210, 7, "#b4b8bd", 3.5);
+  box(152, 206, 220, 7, "#3c4043", 3.5);
+  box(152, 238, 96, 30, "#1a73e8", 8);
+  box(170, 250, 60, 6, "#ffffff", 3);
+  // The photo: a sky, a sun and hills.
+  const P = { x: W - 190, y: 92, w: 168, h: 116 };
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(P.x, P.y, P.w, P.h, 6);
+  ctx.clip();
+  const sky = ctx.createLinearGradient(0, P.y, 0, P.y + P.h);
+  sky.addColorStop(0, "#5aa7ff");
+  sky.addColorStop(1, "#d6ecff");
+  ctx.fillStyle = sky;
+  ctx.fillRect(P.x, P.y, P.w, P.h);
+  ctx.fillStyle = "#ffd25e";
+  ctx.beginPath();
+  ctx.arc(P.x + 122, P.y + 34, 15, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#5daa4f";
+  ctx.beginPath();
+  ctx.ellipse(P.x + 40, P.y + P.h + 6, 90, 52, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "#3b8a3d";
+  ctx.beginPath();
+  ctx.ellipse(P.x + 140, P.y + P.h + 14, 80, 48, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  return P;
+}
+
+function drawPreview() {
+  const c = $("preview");
+  if (!c || !c.offsetParent) return;
+  const W = c.width, H = c.height;
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+  const P = drawSample(ctx, W, H);
+  const half = Math.round(W * 0.42);
+  const img = ctx.getImageData(half, 0, W - half, H);
+  flip(img, (x, y) => x + half >= P.x && x + half < P.x + P.w && y >= P.y && y < P.y + P.h);
+  ctx.putImageData(img, half, 0);
+  ctx.fillStyle = "#a99cff";
+  ctx.fillRect(half - 1, 0, 3, H);
+}
+
+// ---------- pages
+
+let page = "apps";
+try {
+  page = localStorage.getItem("deonyx.page") || "apps";
+} catch {}
+
+function showPage(p) {
+  if (!document.querySelector(`.page[data-page="${p}"]`)) p = "apps";
+  // A hotkey waiting for its keys would swallow the typing on the next page.
+  if (recording) {
+    recording = "";
+    renderKeys();
+    renderApps();
+  }
+  page = p;
+  document.querySelectorAll(".page").forEach((el) => el.classList.toggle("on", el.dataset.page === p));
+  document.querySelectorAll("#side button").forEach((b) => b.classList.toggle("on", b.dataset.page === p));
+  try {
+    localStorage.setItem("deonyx.page", p);
+  } catch {}
+  window.scrollTo(0, 0);
+  drawPreview();
+}
+
+$("side").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-page]");
+  if (b) showPage(b.dataset.page);
 });
 
 // ---------- look
@@ -551,6 +733,7 @@ function renderLook() {
   $("share-auto-row").hidden = !!config.share_original;
   $("readable").checked = config.readable !== false;
   renderScreens();
+  drawPreview();
 }
 
 $("style").addEventListener("click", (e) => {
@@ -564,6 +747,7 @@ $("warm").addEventListener("input", (e) => {
   config.warm = e.target.value / 100;
   $("warm-val").textContent = +e.target.value ? `${e.target.value}%` : t("off");
   save();
+  drawPreview();
 });
 
 $("share").addEventListener("change", (e) => {
@@ -578,6 +762,7 @@ $("share-auto").addEventListener("change", (e) => {
 $("readable").addEventListener("change", (e) => {
   config.readable = e.target.checked;
   save();
+  drawPreview();
 });
 
 // Laptop panels often have no name of their own.
@@ -984,7 +1169,10 @@ function closeWelcome() {
   config.seen_version = version;
   save();
   // In "only the apps I choose" mode, the next thing to do is add one.
-  if (!config.everything && !config.apps.length) openPicker("apps");
+  if (!config.everything && !config.apps.length) {
+    showPage("apps");
+    openPicker("apps");
+  }
 }
 
 $("welcome-next").addEventListener("click", () => {
@@ -1063,8 +1251,10 @@ async function init() {
   systemLang = s.system_lang;
   presets = s.presets || [];
   crash = s.crash || null;
+  profileChanged = !!s.profile_changed;
   screens = await invoke("list_screens").catch(() => []);
   render();
+  showPage(page);
   firstLook();
   await listen("status", (e) => {
     const wasInspecting = status.inspecting;
@@ -1081,8 +1271,10 @@ async function init() {
   await listen("config", (e) => {
     config = e.payload;
     render();
+    checkProfile();
   });
   await listen("inspected", (e) => {
+    showPage("tools");
     status.inspecting = false;
     picking = "";
     setInspecting(false);

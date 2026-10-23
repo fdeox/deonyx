@@ -67,6 +67,8 @@ struct Snapshot {
     presets: Vec<presets::Preset>,
     /// The last crash's report, until dismissed.
     crash: Option<String>,
+    /// The settings differ from the profile in use.
+    profile_changed: bool,
 }
 
 /// Tray texts, in the settings' language: the switch, Settings, Quit, the
@@ -103,7 +105,18 @@ fn get_state(s: tauri::State<State>) -> Snapshot {
         system_lang: win::system_language(),
         presets: s.presets.lock().unwrap().clone(),
         crash: log::crash_report(),
+        profile_changed: config_changed(&s),
     }
+}
+
+fn config_changed(s: &State) -> bool {
+    s.cfg.lock().unwrap().profile_changed()
+}
+
+/// Whether the settings differ from the profile in use, after a change.
+#[tauri::command]
+fn profile_changed(s: tauri::State<State>) -> bool {
+    config_changed(&s)
 }
 
 /// Puts the jump list tasks on the Start menu shortcut and the taskbar, in
@@ -489,8 +502,6 @@ fn sync_startup(app: &AppHandle, c: &Config) -> Result<(), String> {
 /// Saves the settings and hands them to the engine.
 fn apply(app: &AppHandle, config: Config) -> Result<(), String> {
     let s = app.state::<State>();
-    let mut config = config;
-    config.keep_profile();
     config::save(&config).map_err(|e| e.to_string())?;
     let old_lang = std::mem::replace(&mut *s.cfg.lock().unwrap(), config.clone()).lang();
     if config.lang() != old_lang {
@@ -756,6 +767,11 @@ fn open_flyout(app: &AppHandle, at: PhysicalPosition<f64>) {
 }
 
 /// The tray menu, rebuilt whenever the settings change.
+/// A name as a menu shows it: Windows reads "&" as the underlined letter.
+fn menu_text(name: &str) -> String {
+    name.replace('&', "&&")
+}
+
 fn tray_menu(app: &AppHandle, cfg: &Config) -> tauri::Result<Menu<Wry>> {
     let w = words(cfg.lang());
     let accel = if keys::parse(&cfg.keys.all).is_some() { Some(cfg.keys.all.as_str()) } else { None };
@@ -769,14 +785,14 @@ fn tray_menu(app: &AppHandle, cfg: &Config) -> tauri::Result<Menu<Wry>> {
     let checks: Vec<CheckMenuItem<Wry>> = cfg
         .apps
         .iter()
-        .map(|a| CheckMenuItem::with_id(app, format!("app:{}", a.key()), if a.name.is_empty() { &a.exe } else { &a.name }, true, a.enabled, None::<&str>))
+        .map(|a| CheckMenuItem::with_id(app, format!("app:{}", a.key()), menu_text(if a.name.is_empty() { &a.exe } else { &a.name }), true, a.enabled, None::<&str>))
         .collect::<tauri::Result<_>>()?;
     let refs: Vec<&dyn IsMenuItem<Wry>> = checks.iter().map(|c| c as &dyn IsMenuItem<Wry>).collect();
     let apps = Submenu::with_items(app, w[7], !checks.is_empty(), &refs)?;
     let profiles: Vec<CheckMenuItem<Wry>> = cfg
         .profiles
         .iter()
-        .map(|p| CheckMenuItem::with_id(app, format!("profile:{}", p.name), &p.name, true, cfg.profile == p.name, None::<&str>))
+        .map(|p| CheckMenuItem::with_id(app, format!("profile:{}", p.name), menu_text(&p.name), true, cfg.profile == p.name, None::<&str>))
         .collect::<tauri::Result<_>>()?;
     let refs: Vec<&dyn IsMenuItem<Wry>> = profiles.iter().map(|c| c as &dyn IsMenuItem<Wry>).collect();
     let profile_menu = Submenu::with_items(app, w[8], true, &refs)?;
@@ -996,6 +1012,7 @@ fn main() {
             pause,
             save_profile,
             use_profile,
+            profile_changed,
             delete_profile,
             dismiss_crash,
             diagnostics,

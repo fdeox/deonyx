@@ -2,6 +2,20 @@
 // languages show the English list.
 
 const NEWS = {
+  "0.2.1": {
+    en: [
+      "Settings in pages with a side menu: Apps, Look, When, Profiles, Tools, General and Advanced.",
+      "A live preview shows how each look darkens a window, and that photos keep their colors.",
+      "Profiles keep your changes apart until you save them, and Undo takes them back.",
+      "An experimental installer for Windows on ARM.",
+    ],
+    tr: [
+      "Ayarlar artık sol menülü sayfalarda: Uygulamalar, Görünüm, Ne zaman, Profiller, Araçlar, Genel ve Gelişmiş.",
+      "Canlı önizleme, her görünümün bir pencereyi nasıl kararttığını ve fotoğrafların renklerini koruduğunu gösteriyor.",
+      "Profiller değişikliklerini sen kaydedene kadar ayrı tutuyor, Geri al ile eski haline dönüyor.",
+      "Windows on ARM için deneysel kurulum dosyası.",
+    ],
+  },
   "0.2.0": {
     en: [
       "Photos and videos inside a window are found and kept in their real colors.",

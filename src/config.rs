@@ -256,16 +256,10 @@ impl Config {
         }
     }
 
-    /// Changes made while a profile is in use belong to that profile.
-    pub fn keep_profile(&mut self) {
-        if self.profile.is_empty() {
-            return;
-        }
-        let p = self.to_profile(&self.profile);
-        match self.profiles.iter_mut().find(|q| q.name == p.name) {
-            Some(q) => *q = p,
-            None => self.profile.clear(),
-        }
+    /// The settings differ from the profile in use: the settings window
+    /// offers to save them into it, or to go back.
+    pub fn profile_changed(&self) -> bool {
+        self.profiles.iter().find(|p| p.name == self.profile).is_some_and(|p| *p != self.to_profile(&self.profile))
     }
 
     /// Switches to a profile. False if there's none of that name.
