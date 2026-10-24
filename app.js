@@ -302,3 +302,20 @@ document.getElementById("toggle").addEventListener("click", (e) => {
   e.target.textContent = showOriginal ? "Show with Deonyx" : "Show original";
   draw();
 });
+
+// The name card loads, and so starts its animation, when it comes into view.
+const nameCard = document.querySelector(".name-card");
+const startName = () => {
+  nameCard.parentElement.querySelectorAll("source").forEach((s) => (s.srcset = s.dataset.srcset));
+  nameCard.src = nameCard.dataset.src;
+};
+if ("IntersectionObserver" in window) {
+  const seen = new IntersectionObserver((entries) => {
+    if (!entries.some((e) => e.isIntersecting)) return;
+    seen.disconnect();
+    startName();
+  }, { threshold: 0.35 });
+  seen.observe(nameCard);
+} else {
+  startName();
+}

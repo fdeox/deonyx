@@ -229,6 +229,17 @@ nav {
 #faq summary { cursor: pointer; font-weight: 600; }
 #faq p { color: var(--muted); margin: 10px 0 2px; }
 
+.name-card {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-width: 900px;
+  margin: 0 auto;
+  border-radius: 22px;
+  background: #0f0e17;
+  box-shadow: 0 30px 90px -40px #8b7cf699;
+}
+
 .final { text-align: center; padding-bottom: 20px; }
 .final h2 { margin: 16px 0 22px; }
 
