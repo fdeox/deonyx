@@ -242,6 +242,9 @@ nav {
 
 .final { text-align: center; padding-bottom: 20px; }
 .final h2 { margin: 16px 0 22px; }
+.listed { display: block; width: fit-content; margin: 28px auto 0; border-radius: 10px; transition: transform .15s, box-shadow .15s; }
+.listed img { display: block; }
+.listed:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px var(--accent), 0 10px 30px -12px #8b7cf699; }
 
 footer {
   display: flex;
