@@ -1038,7 +1038,13 @@ $("copy-diag").addEventListener("click", async () => {
 
 // ---------- general
 
+// From the Microsoft Store: the Store updates Deonyx, and there's no
+// administrator mode.
+let packaged = false;
+
 function renderGeneral() {
+  $("admin").closest(".row").hidden = packaged;
+  $("updates").closest(".row").hidden = packaged;
   $("autostart").checked = !!config.autostart;
   $("admin").checked = !!config.admin;
   $("language").value = config.language || "auto";
@@ -1047,7 +1053,10 @@ function renderGeneral() {
 
 $("autostart").addEventListener("change", (e) => {
   const on = e.target.checked;
-  invoke("set_autostart", { on }).then(() => { config.autostart = on; }).catch(() => { e.target.checked = !on; });
+  invoke("set_autostart", { on }).then(() => { config.autostart = on; }).catch((err) => {
+    e.target.checked = !on;
+    if (packaged) toast(String(err));
+  });
 });
 
 $("admin").addEventListener("change", async (e) => {
@@ -1252,6 +1261,8 @@ async function init() {
   presets = s.presets || [];
   crash = s.crash || null;
   profileChanged = !!s.profile_changed;
+  packaged = !!s.packaged;
+  if (packaged) config.autostart = await invoke("get_autostart").catch(() => config.autostart);
   screens = await invoke("list_screens").catch(() => []);
   render();
   showPage(page);

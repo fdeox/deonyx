@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Microsoft Store package. pack.mjs fills in the {{...}} parts: the
+     identity Partner Center gives the app, the version and the processor. -->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:uap11="http://schemas.microsoft.com/appx/manifest/uap/windows10/11"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 uap11 desktop rescap">
+
+  <Identity Name="{{NAME}}" Publisher="{{PUBLISHER}}" Version="{{VERSION}}" ProcessorArchitecture="{{ARCH}}" />
+
+  <Properties>
+    <DisplayName>Deonyx</DisplayName>
+    <PublisherDisplayName>{{PUBLISHER_DISPLAY_NAME}}</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+    <Description>Dark mode for any Windows app.</Description>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+    <Resource Language="tr-tr" />
+  </Resources>
+
+  <Capabilities>
+    <!-- A desktop app: it draws over other apps' windows, which needs full trust. -->
+    <rescap:Capability Name="runFullTrust" />
+    <!-- Capturing the windows it darkens, without the yellow capture border. -->
+    <uap11:Capability Name="graphicsCaptureProgrammatic" />
+    <uap11:Capability Name="graphicsCaptureWithoutBorder" />
+  </Capabilities>
+
+  <Applications>
+    <Application Id="Deonyx" Executable="deonyx.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Deonyx"
+        Description="Dark mode for any Windows app"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png" />
+        <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#111116" />
+      </uap:VisualElements>
+      <Extensions>
+        <!-- "Start with Windows" (store.rs); off until the user turns it on. -->
+        <desktop:Extension Category="windows.startupTask" Executable="deonyx.exe" EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask TaskId="DeonyxStartup" Enabled="false" DisplayName="Deonyx" />
+        </desktop:Extension>
+        <!-- The deonyx command line (toggle, pause, profile...) for scripts and Stream Deck. -->
+        <uap3:Extension Category="windows.appExecutionAlias" Executable="deonyx.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap3:AppExecutionAlias>
+            <desktop:ExecutionAlias Alias="deonyx.exe" />
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+</Package>

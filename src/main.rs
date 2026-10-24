@@ -27,6 +27,7 @@ mod presets;
 mod protect;
 mod screens;
 mod select;
+mod store;
 mod sun;
 mod win;
 
@@ -69,6 +70,9 @@ struct Snapshot {
     crash: Option<String>,
     /// The settings differ from the profile in use.
     profile_changed: bool,
+    /// Installed from the Microsoft Store: it updates Deonyx, and there's no
+    /// administrator mode.
+    packaged: bool,
 }
 
 /// Tray texts, in the settings' language: the switch, Settings, Quit, the
@@ -106,6 +110,7 @@ fn get_state(s: tauri::State<State>) -> Snapshot {
         presets: s.presets.lock().unwrap().clone(),
         crash: log::crash_report(),
         profile_changed: config_changed(&s),
+        packaged: store::packaged(),
     }
 }
 
@@ -125,7 +130,7 @@ fn profile_changed(s: tauri::State<State>) -> bool {
 /// it off again.
 fn update_jump_list(lang: &'static str) {
     let test = std::env::var_os("DEONYX_JUMPLIST_TEST").is_some();
-    if testing() && !test {
+    if (testing() && !test) || store::packaged() {
         return;
     }
     let id = if testing() { "com.fdeox.deonyx.test" } else { "com.fdeox.deonyx" };
@@ -226,6 +231,9 @@ fn pick_exe(app: AppHandle) -> Option<apps::Running> {
 
 #[tauri::command]
 fn get_autostart(s: tauri::State<State>) -> bool {
+    if store::packaged() {
+        return store::starts_with_windows();
+    }
     s.cfg.lock().unwrap().autostart
 }
 
@@ -233,7 +241,11 @@ fn get_autostart(s: tauri::State<State>) -> bool {
 fn set_autostart(app: AppHandle, on: bool) -> Result<(), String> {
     let mut c = app.state::<State>().cfg.lock().unwrap().clone();
     c.autostart = on;
-    sync_startup(&app, &c)?;
+    if store::packaged() {
+        store::set_start_with_windows(on)?;
+    } else {
+        sync_startup(&app, &c)?;
+    }
     apply(&app, c)
 }
 
@@ -447,7 +459,8 @@ fn from_scoop() -> bool {
 
 #[tauri::command]
 async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
-    if from_scoop() {
+    // Scoop and the Microsoft Store update Deonyx themselves.
+    if from_scoop() || store::packaged() {
         return Ok(None);
     }
     let found = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
@@ -467,6 +480,9 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
             let _ = app.emit("update-test-install", &v);
             return Ok(());
         }
+    }
+    if store::packaged() {
+        return Err("The Microsoft Store updates Deonyx.".into());
     }
     let Some(update) = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())? else {
         return Err("no update".into());
@@ -967,7 +983,7 @@ fn main() {
         std::process::exit(code);
     }
     // The id the Start menu shortcut has, so the jump list lands on it.
-    if !testing() {
+    if !testing() && !store::packaged() {
         jumplist::claim_app_id();
     }
     // Started by the task right after the old instance quit: let it go first.
@@ -976,6 +992,11 @@ fn main() {
     }
 
     let mut cfg = config::load();
+    // No administrator task from the Store.
+    if store::packaged() && cfg.admin {
+        cfg.admin = false;
+        let _ = config::save(&cfg);
+    }
     if cfg.admin && !admin::elevated() {
         // Running as administrator is on: hand over to the running Deonyx,
         // or start it through the task.
@@ -992,7 +1013,7 @@ fn main() {
     }
     let marker = config::dir().join("open-settings");
     let reopen = std::fs::remove_file(&marker).is_ok();
-    let hidden = has("--hidden") && !reopen;
+    let hidden = (has("--hidden") || store::started_with_windows()) && !reopen;
     // For testing: --process X darkens X for this run without saving it.
     let mut it = args.iter().skip(1);
     while let Some(a) = it.next() {
@@ -1035,7 +1056,7 @@ fn main() {
                 presets: Mutex::new(presets::load()),
             });
             // Starting with Windows used to live only in the Run key.
-            if !cfg.admin && !cfg.autostart && app.autolaunch().is_enabled().unwrap_or(false) {
+            if !store::packaged() && !cfg.admin && !cfg.autostart && app.autolaunch().is_enabled().unwrap_or(false) {
                 let mut c = cfg.clone();
                 c.autostart = true;
                 let _ = config::save(&c);
