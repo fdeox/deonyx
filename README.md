@@ -22,6 +22,10 @@
   <sub>SketchUp, left as it is and right with Deonyx. Menus, toolbars and panels go dark; the 3D view keeps its real colors.</sub>
 </p>
 
+<p align="center">
+  <img src="assets/name.svg" width="860" alt="Where the name comes from: deo from fdeox, the maker; onyx, the black gemstone; Nyx, the goddess of the night. Say it de-o-niks.">
+</p>
+
 ## Why
 
 Plenty of Windows apps still have no dark mode. SketchUp is one of them, and its users have been asking for one for years. The tools that fill the gap today are paid, and they simply invert colors: textures and pictures come out wrong, and the screen flashes white when you switch windows.
