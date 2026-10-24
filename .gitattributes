@@ -1,0 +1,4 @@
+# Translations and the city list are data, not code: keep them out of
+# GitHub's language stats.
+ui/lang/*.js linguist-detectable=false
+ui/cities.js linguist-detectable=false
