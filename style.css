@@ -83,6 +83,9 @@ nav {
 .hero h1 span { background: linear-gradient(90deg, #a99cff, #8b7cf6); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .lead { font-size: clamp(17px, 2vw, 20px); color: var(--muted); max-width: 680px; margin: 0 auto 30px; }
 .cta { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; margin-bottom: 16px; }
+.store { display: inline-flex; border-radius: 8px; transition: transform .15s, box-shadow .15s; }
+.store img { display: block; height: 46px; width: auto; }
+.store:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px var(--accent), 0 10px 30px -12px #8b7cf699; }
 
 /* before / after */
 .compare-wrap { padding-top: 40px; }
