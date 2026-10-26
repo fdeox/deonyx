@@ -170,6 +170,11 @@ impl Layer {
             let (capture, start) = if copy_screen {
                 (None, SizeInt32 { Width: width(&r), Height: height(&r) })
             } else {
+                // A Store copy without the user's yes would hang here (see
+                // store::capture_allowed), so it doesn't even try.
+                if !crate::store::capture_allowed() {
+                    return Err(windows::core::Error::from_hresult(windows::Win32::Foundation::E_ACCESSDENIED));
+                }
                 let interop = factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
                 let item: GraphicsCaptureItem = interop.CreateForWindow(target)?;
                 let start = item.Size()?;

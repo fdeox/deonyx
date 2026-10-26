@@ -1,8 +1,8 @@
 // Windows 10 before build 20348 draws a yellow border around every window
 // captured with Windows.Graphics.Capture, and apps can't turn it off; on
-// newer Windows a Store copy may only turn it off with the user's yes
-// (store::borderless_allowed). There Deonyx copies the screen instead (DXGI
-// Desktop Duplication). Its layers
+// newer Windows a Store copy may only capture windows, and without the
+// border, with the user's yes (store::capture_allowed). There Deonyx copies
+// the screen instead (DXGI Desktop Duplication). Its layers
 // are hidden from screen capture, so the copy shows the real windows under
 // them, and each layer takes the part of the screen its window covers.
 
@@ -26,7 +26,7 @@ pub fn needed() -> bool {
     match std::env::var("DEONYX_CAPTURE").as_deref() {
         Ok("desktop") => true,
         Ok("window") => false,
-        _ => windows_build() < BORDERLESS_BUILD || !crate::store::borderless_allowed(),
+        _ => windows_build() < BORDERLESS_BUILD || !crate::store::capture_allowed(),
     }
 }
 

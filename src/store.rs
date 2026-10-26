@@ -47,12 +47,15 @@ fn on(s: StartupTaskState) -> bool {
     s == StartupTaskState::Enabled || s == StartupTaskState::EnabledByPolicy
 }
 
-/// Whether windows can be captured without the yellow border Windows draws
-/// around them. Programs outside a package always may turn it off. A Store
-/// copy needs the user's yes (Settings > Privacy & security > Screenshot
-/// borders): asked once, the first time, and the answer sticks. Without it,
-/// layers copy the screen instead (desk.rs), which shows no border at all.
-pub fn borderless_allowed() -> bool {
+/// Whether windows can be captured one by one (Windows.Graphics.Capture)
+/// without the yellow border Windows draws around them. Programs outside a
+/// package always may. A Store copy needs the user's yes twice (Settings >
+/// Privacy & security > Screenshots and apps, and Screenshot borders): each
+/// asked once, the first time, and the answers stick. Without both, layers
+/// copy the screen instead (desk.rs), which needs neither and shows no
+/// border. A window must never be captured without the first yes: Windows
+/// then holds the call while it waits for an answer it never asks for.
+pub fn capture_allowed() -> bool {
     static ALLOWED: OnceLock<bool> = OnceLock::new();
     *ALLOWED.get_or_init(|| {
         if !packaged() {
@@ -61,14 +64,22 @@ pub fn borderless_allowed() -> bool {
         // Test copies never wait on a question nobody is there to answer.
         let ask = std::env::var_os("DEONYX_CONFIG_DIR").is_none();
         let status = on_own_thread(move || {
-            let now = AppCapability::Create(&HSTRING::from("graphicsCaptureWithoutBorder"))?.CheckAccess()?;
-            if now == AppCapabilityAccessStatus::UserPromptRequired && ask {
-                return GraphicsCaptureAccess::RequestAccessAsync(GraphicsCaptureAccessKind::Borderless)?.get();
-            }
-            Ok(now)
+            let access = |name: &str, kind: GraphicsCaptureAccessKind| -> Result<AppCapabilityAccessStatus> {
+                let now = AppCapability::Create(&HSTRING::from(name))?.CheckAccess()?;
+                if now == AppCapabilityAccessStatus::UserPromptRequired && ask {
+                    return GraphicsCaptureAccess::RequestAccessAsync(kind)?.get();
+                }
+                Ok(now)
+            };
+            let programmatic = access("graphicsCaptureProgrammatic", GraphicsCaptureAccessKind::Programmatic)?;
+            let borderless = access("graphicsCaptureWithoutBorder", GraphicsCaptureAccessKind::Borderless)?;
+            Ok((programmatic, borderless))
         });
-        crate::note!("capture without the border: {}", status.as_ref().map_or("unknown".to_string(), |s| s.0.to_string()));
-        status.is_ok_and(|s| s == AppCapabilityAccessStatus::Allowed)
+        match &status {
+            Ok((p, b)) => crate::note!("capture access: windows {}, without the border {}", p.0, b.0),
+            Err(e) => crate::note!("capture access unknown: {e}"),
+        }
+        status.is_ok_and(|(p, b)| p == AppCapabilityAccessStatus::Allowed && b == AppCapabilityAccessStatus::Allowed)
     })
 }
 

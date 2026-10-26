@@ -14,7 +14,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
 const out = join(root, "target", "store");
 const identity = JSON.parse(readFileSync(join(here, "identity.json"), "utf8"));
-const version = JSON.parse(readFileSync(join(root, "tauri.conf.json"), "utf8")).version + ".0";
+// The Store never takes two different packages under one version, so a
+// rebuilt package for the same app version goes up with STORE_VERSION
+// (e.g. 0.3.1.0; the last part must stay 0).
+const version = process.env.STORE_VERSION || JSON.parse(readFileSync(join(root, "tauri.conf.json"), "utf8")).version + ".0";
 
 // The newest Windows SDK's tools.
 const kits = "C:\\Program Files (x86)\\Windows Kits\\10\\bin";
