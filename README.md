@@ -17,6 +17,10 @@
 </p>
 
 <p align="center">
+  <a href="https://apps.microsoft.com/detail/9NNBB07D101P?mode=direct"><img src="https://get.microsoft.com/images/en-us%20dark.svg" width="200" alt="Get it from Microsoft"></a>
+</p>
+
+<p align="center">
   <img src="assets/screenshots/sketchup.png" alt="SketchUp, the left half as it is and the right half with Deonyx">
   <br>
   <sub>SketchUp, left as it is and right with Deonyx. Menus, toolbars and panels go dark; the 3D view keeps its real colors.</sub>
@@ -54,9 +58,9 @@ Deonyx is free, and it does it properly.
 
 - **Your apps, or every light window.** Pick the apps to darken, or let Deonyx darken every light window and keep a list of programs it leaves alone.
 - **Tune each app.** Its own background darkness and text brightness. Well-known apps start with settings that suit them.
-- **Pick a look.** Gray is easy on the eyes, Black suits OLED screens, Soft lowers the contrast, Paper is warm and calm for long reading. Faint gray text stays readable, a warm tint makes evenings easier, and each screen can have its own look, or none at all.
+- **Pick a look.** Gray is easy on the eyes, Black suits OLED screens, Soft lowers the contrast, Paper is warm and calm for long reading. Faint gray text stays readable, a warm tint makes evenings easier, and each screen can have its own look, or none at all. Apps with a dark mode of their own can be dimmed a little, without flipping anything.
 - **Profiles.** Keep setups like Day, Night or Presenting under a name and switch in one click, from the settings, the tray, a Stream Deck key or the command line.
-- **Choose when.** Always, whenever Windows is in dark mode, between the hours you set, or from sunset to sunrise where you live. On battery it can keep going, save power, or pause. It also steps aside by itself while the games or programs you pick are running.
+- **Choose when.** Always, whenever Windows is in dark mode, between the hours you set, or from sunset to sunrise where you live, darkening slowly over half an hour if you like. On battery it can keep going, save power, or pause. It also steps aside by itself while the games or programs you pick are running.
 - **Keep real colors where you want them.** Click a video, a canvas or a 3D view, or draw a box over it, and it stays as it is, even when the window is resized.
 - **Peek at the real colors.** Hold Ctrl+Alt+P and every window shows its real colors until you let go. Handy for picking a color.
 - **Share your screen in real colors.** Screen sharing and screenshots can show your apps as they really are, while you keep seeing them dark. Always, or only while Zoom or Webex shares or OBS, Streamlabs or XSplit runs.
@@ -76,9 +80,11 @@ Deonyx is free, and it does it properly.
 
 <img src="assets/screenshots/installer.png" width="360" align="right" alt="The Deonyx installer">
 
-Download `Deonyx_..._x64-setup.exe` from the [latest release](https://github.com/fdeox/deonyx/releases/latest) and run it. It installs for your user only, without administrator rights. On a Windows on ARM PC, try the experimental `Deonyx_..._arm64-setup.exe`. Deonyx needs Windows 11, or Windows 10 version 2004 or later. On Windows 10 it copies the screen instead of capturing each window, because Windows 10 draws a yellow border around every captured window.
+The easiest way is the [Microsoft Store](https://apps.microsoft.com/detail/9NNBB07D101P?mode=direct): it installs in one click, Windows trusts it right away, and the Store keeps it up to date. The Store version does everything except run as administrator.
 
-Deonyx isn't code-signed, so Windows SmartScreen may say it protected your PC. Click **More info**, then **Run anyway**.
+Or download `Deonyx_..._x64-setup.exe` from the [latest release](https://github.com/fdeox/deonyx/releases/latest) and run it. It installs for your user only, without administrator rights. On a Windows on ARM PC, try the experimental `Deonyx_..._arm64-setup.exe`. Deonyx needs Windows 11, or Windows 10 version 2004 or later. On Windows 10 it copies the screen instead of capturing each window, because Windows 10 draws a yellow border around every captured window.
+
+The installer from GitHub isn't code-signed, so Windows SmartScreen may say it protected your PC. Click **More info**, then **Run anyway**.
 
 Deonyx lives in the tray. Click its icon, choose **Add an app**, and pick a program from the open or installed ones. Settings are kept in `%APPDATA%\Deonyx\config.json`. To remove Deonyx, uninstall it from Settings > Apps like any other app.
 
