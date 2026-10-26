@@ -358,7 +358,15 @@ fn diagnostics(app: AppHandle) -> String {
         c.apps.len(),
         c.exclude.len()
     ));
-    out.push(format!("Look: {}, warm {:.0}%, schedule {}, battery {}", c.style, c.warm * 100.0, c.schedule, c.battery));
+    out.push(format!(
+        "Look: {}, warm {:.0}%, dim dark windows {:.0}%, schedule {}{}, battery {}",
+        c.style,
+        c.warm * 100.0,
+        c.dim * 100.0,
+        c.schedule,
+        if c.gradual { " (gradual)" } else { "" },
+        c.battery
+    ));
     out.push(format!(
         "State: {}{}{}{}",
         if st.enabled { "on" } else { "off" },

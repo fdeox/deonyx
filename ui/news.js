@@ -2,6 +2,16 @@
 // languages show the English list.
 
 const NEWS = {
+  "0.3.0": {
+    en: [
+      "Change slowly: with set hours or sunset to sunrise, darkening comes in over half an hour and goes the same way at the end. Turn it on under When.",
+      "Dim apps that are dark already: apps with their own dark mode get their bright text and white parts turned down a little, nothing flipped. Find it under Look.",
+    ],
+    tr: [
+      "Yavaşça geç: belirli saatlerde ya da gün batımından gün doğumuna karartırken kararma yarım saatte yavaş yavaş geliyor, bitişte de aynı şekilde gidiyor. Ne zaman sayfasından açabilirsin.",
+      "Zaten koyu uygulamaları kıs: kendi karanlık modu olan uygulamaların parlak yazıları ve beyaz kısımları hiçbir şey ters çevrilmeden biraz kısılıyor. Görünüm sayfasında.",
+    ],
+  },
   "0.2.2": {
     en: [
       "Deonyx tells you when a new version is out: a green dot on the tray icon, and Update at the top of the tray menu and the tray window. One click installs it.",

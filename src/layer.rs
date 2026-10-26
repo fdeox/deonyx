@@ -60,6 +60,8 @@ pub struct Look {
     pub warm: f32,
     /// Lifts faint text: 1 leaves it, lower lifts more (see shader.hlsl).
     pub boost: f32,
+    /// A window that is dark already is dimmed this much (0 leaves it).
+    pub dim: f32,
     pub split: bool,
     pub owner: bool,
     /// Look for photos in the window.
@@ -265,6 +267,7 @@ impl Layer {
                     holes: if see_through { 1.0 } else { 0.0 },
                     strength: look.strength,
                     boost: look.boost,
+                    dim: look.dim,
                     ..Default::default()
                 },
                 protect: Vec::new(),

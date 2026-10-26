@@ -18,7 +18,7 @@ cbuffer Params : register(b0)
     float warm;        // 0..1 warm tint, like Night light
     float strength;    // 0..1: 0 shows the real colours, for fading in and out
     float boost;       // curve on the flipped lightness: < 1 lifts faint text
-    float pad;
+    float dim;         // > 0: a window that is dark already is dimmed this much
 };
 
 float4 vs(uint id : SV_VertexID) : SV_Position
@@ -86,10 +86,27 @@ float4 shown(float3 rgb, float4 c)
     return holes > 0.0 ? float4(rgb * strength, strength) : float4(lerp(c.rgb, rgb, strength), 1);
 }
 
+float3 tint(float3 rgb)
+{
+    return rgb * lerp(float3(1, 1, 1), float3(1.0, 0.86, 0.68), warm);
+}
+
+// A window that is dark already, dimmed rather than flipped: the lighter a
+// pixel, the more it comes down, so bright text and white parts calm down
+// while the dark background barely moves. Saturation stays as it was.
+float3 dimmed(float3 rgb)
+{
+    float3 lab = to_oklab(to_lin(rgb));
+    float l = lab.x * (1.0 - dim * lab.x);
+    lab.yz *= l / max(lab.x, 0.001);
+    lab.x = l;
+    return tint(to_srgb(saturate(from_oklab(lab))));
+}
+
 float4 ps(float4 pos : SV_Position) : SV_Target
 {
     float4 c = src.Load(int3(pos.xy, 0));
-    if (pos.x < split || amount <= 0.0)
+    if (pos.x < split || (amount <= 0.0 && dim <= 0.0))
         return keep(c);
     for (uint k = 0; k < count; k++)
     {
@@ -107,6 +124,8 @@ float4 ps(float4 pos : SV_Position) : SV_Target
         if (max(c.r, max(c.g, c.b)) < 0.002 && max(block.r, max(block.g, block.b)) < 0.002)
             return float4(0, 0, 0, 0);
     }
+    if (amount <= 0.0)
+        return shown(dimmed(c.rgb), c);
     // Flip lightness only: white turns dark grey, black turns soft white,
     // and a red stays red.
     float3 lab = to_oklab(to_lin(c.rgb));
@@ -152,9 +171,7 @@ float4 ps(float4 pos : SV_Position) : SV_Target
     // turn into a loud red outline once it is dark.
     float keep = fringe > 0.0 ? pow(saturate(lab.x / max(before, 0.001)), 0.8) : 1.0;
     lab.yz *= sat * keep;
-    float3 rgb = to_srgb(saturate(from_oklab(lab)));
-    rgb *= lerp(float3(1, 1, 1), float3(1.0, 0.86, 0.68), warm);
-    return shown(rgb, c);
+    return shown(tint(to_srgb(saturate(from_oklab(lab)))), c);
 }
 
 float light(float3 c)

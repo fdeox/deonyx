@@ -5,7 +5,7 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 let config = {
-  enabled: true, apps: [], exclude: [], everything: false, style: "gray", warm: 0, schedule: "always", from: "20:00", to: "07:00",
+  enabled: true, apps: [], exclude: [], everything: false, style: "gray", warm: 0, dim: 0, schedule: "always", from: "20:00", to: "07:00", gradual: false,
   language: "auto", updates: true, keys: { all: "Ctrl+Alt+D", front: "Ctrl+Alt+F", peek: "Ctrl+Alt+P", window: "Ctrl+Alt+W" }, share_original: false,
   battery: "keep", place: { name: "", lat: 0, lon: 0 }, screens: [], paused_until: 0, welcomed: false, seen_version: "",
   readable: true, share_auto: true, pause_apps: [], profiles: [], profile: "",
@@ -732,6 +732,9 @@ function renderLook() {
   $("share-auto").checked = config.share_auto !== false;
   $("share-auto-row").hidden = !!config.share_original;
   $("readable").checked = config.readable !== false;
+  const d = Math.round((config.dim || 0) * 100);
+  $("dim").value = d;
+  $("dim-val").textContent = d ? `${d}%` : t("off");
   renderScreens();
   drawPreview();
 }
@@ -763,6 +766,11 @@ $("readable").addEventListener("change", (e) => {
   config.readable = e.target.checked;
   save();
   drawPreview();
+});
+$("dim").addEventListener("input", (e) => {
+  config.dim = e.target.value / 100;
+  $("dim-val").textContent = +e.target.value ? `${e.target.value}%` : t("off");
+  save();
 });
 
 // Laptop panels often have no name of their own.
@@ -806,6 +814,9 @@ function renderWhen() {
   $("schedule").value = config.schedule || "always";
   $("times-row").hidden = config.schedule !== "times";
   $("sun-row").hidden = config.schedule !== "sun";
+  // Easing in and out only makes sense where the schedule has a start and an end.
+  $("gradual-row").hidden = config.schedule !== "times" && config.schedule !== "sun";
+  $("gradual").checked = !!config.gradual;
   $("from").value = config.from || "20:00";
   $("to").value = config.to || "07:00";
   $("when-hint").textContent = t(`when.hint.${config.schedule || "always"}`);
@@ -839,6 +850,10 @@ for (const id of ["from", "to"]) {
 }
 $("battery").addEventListener("change", (e) => {
   config.battery = e.target.value;
+  save();
+});
+$("gradual").addEventListener("change", (e) => {
+  config.gradual = e.target.checked;
   save();
 });
 

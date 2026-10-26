@@ -145,6 +145,7 @@ pub struct Profile {
     pub screens: Vec<Screen>,
     pub share_original: bool,
     pub readable: bool,
+    pub dim: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -165,6 +166,9 @@ pub struct Config {
     /// "HH:MM", for schedule "times". May wrap past midnight.
     pub from: String,
     pub to: String,
+    /// With set hours or the sun, darkening comes in slowly after the start
+    /// (engine::EASE_MIN) and goes the same way before the end.
+    pub gradual: bool,
     /// Start with Windows.
     pub autostart: bool,
     /// Run as administrator, through a scheduled task (admin.rs).
@@ -189,6 +193,9 @@ pub struct Config {
     pub seen_version: String,
     /// Faint text is lifted a little more, so it stays readable when dark.
     pub readable: bool,
+    /// Windows that are dark already are dimmed this much instead of shown
+    /// as they are (bright text and white parts come down most). 0 is off.
+    pub dim: f32,
     /// Screen sharing in real colours on its own while a meeting or
     /// streaming app shares (see engine::SHARE_APPS).
     pub share_auto: bool,
@@ -211,6 +218,7 @@ impl Default for Config {
             schedule: "always".into(),
             from: "20:00".into(),
             to: "07:00".into(),
+            gradual: false,
             autostart: false,
             admin: false,
             language: "auto".into(),
@@ -224,6 +232,7 @@ impl Default for Config {
             welcomed: false,
             seen_version: String::new(),
             readable: true,
+            dim: 0.0,
             share_auto: true,
             pause_apps: Vec::new(),
             profiles: Vec::new(),
@@ -253,6 +262,7 @@ impl Config {
             screens: self.screens.clone(),
             share_original: self.share_original,
             readable: self.readable,
+            dim: self.dim,
         }
     }
 
@@ -273,6 +283,7 @@ impl Config {
         self.screens = p.screens;
         self.share_original = p.share_original;
         self.readable = p.readable;
+        self.dim = p.dim;
         self.profile = p.name;
         true
     }

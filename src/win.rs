@@ -200,6 +200,12 @@ pub fn local_minutes() -> u32 {
     t.wHour as u32 * 60 + t.wMinute as u32
 }
 
+/// The same with the seconds, for changes that run over many minutes.
+pub fn local_minutes_exact() -> f64 {
+    let t = unsafe { windows::Win32::System::SystemInformation::GetLocalTime() };
+    t.wHour as f64 * 60.0 + t.wMinute as f64 + t.wSecond as f64 / 60.0
+}
+
 /// A window without a title bar that covers its whole screen: a game or a
 /// video played full screen.
 pub fn is_fullscreen(h: HWND) -> bool {

@@ -51,6 +51,15 @@ const READABLE: f32 = 0.78;
 pub const FADE_MS: f32 = 220.0;
 /// Peeking at the real colours is quicker.
 const PEEK_MS: f32 = 110.0;
+/// With "gradual", darkening comes in over this many minutes after the
+/// schedule starts and goes over as many before it ends.
+pub const EASE_MIN: f64 = 30.0;
+/// The gradual strength moves on in steps at least this big, each one
+/// faded over LEVEL_MS so the steps never show.
+const LEVEL_STEP: f32 = 0.01;
+const LEVEL_MS: f32 = 4000.0;
+/// The most a dark window is dimmed.
+const DIM_MAX: f32 = 0.6;
 /// On battery, "slow" draws a window at most this often.
 const BATTERY_GAP: Duration = Duration::from_millis(66);
 
@@ -398,6 +407,13 @@ struct Manager {
     /// the place for "sun".
     schedule: (String, u32, u32),
     place: (f64, f64),
+    /// Darkening comes and goes slowly at the ends of the schedule.
+    gradual: bool,
+    /// How dark it is right now, 0..1 (below 1 only while gradual eases in
+    /// or out).
+    level: f32,
+    /// Windows that are dark already are dimmed this much.
+    dim: f32,
     enabled: bool,
     /// The schedule allows darkening right now.
     in_time: bool,
@@ -474,6 +490,19 @@ fn minutes(hhmm: &str) -> u32 {
     (h.trim().parse::<u32>().unwrap_or(0) % 24) * 60 + m.trim().parse::<u32>().unwrap_or(0) % 60
 }
 
+/// Darkening strength at `now` in a stretch from `start` to `end` (minutes
+/// since midnight; it may wrap past midnight): 0 at either end, 1 from
+/// EASE_MIN in until EASE_MIN before the end, eased in between.
+fn ease(start: f64, end: f64, now: f64) -> f32 {
+    let len = (end - start).rem_euclid(1440.0);
+    let since = (now - start).rem_euclid(1440.0);
+    if len <= 0.0 || since > len {
+        return 1.0;
+    }
+    let t = (since.min(len - since) / EASE_MIN).clamp(0.0, 1.0);
+    (t * t * (3.0 - 2.0 * t)) as f32
+}
+
 fn on_battery() -> bool {
     // Test copies can pretend (DEONYX_BATTERY=1).
     if std::env::var_os("DEONYX_CONFIG_DIR").is_some() && std::env::var_os("DEONYX_BATTERY").is_some() {
@@ -517,6 +546,43 @@ impl Manager {
         }
     }
 
+    /// How dark it should be now: 1, except while "gradual" eases in after
+    /// the start of set hours or sunset, and out before their end.
+    fn night_level(&self) -> f32 {
+        if !self.gradual {
+            return 1.0;
+        }
+        if !self.in_time {
+            return 0.0;
+        }
+        let (start, end) = match self.schedule.0.as_str() {
+            "times" => (self.schedule.1, self.schedule.2),
+            "sun" => match sun::today(self.place.0, self.place.1) {
+                sun::Day::Times { rise, set } => (set, rise),
+                _ => return 1.0,
+            },
+            _ => return 1.0,
+        };
+        ease(start as f64, end as f64, local_minutes_exact())
+    }
+
+    /// Moves every layer towards the strength the time of day asks for, in
+    /// steps small enough not to show; `at_once` after a settings change.
+    fn follow_level(&mut self, at_once: bool) {
+        let level = self.night_level();
+        if level == self.level {
+            return;
+        }
+        let ends = level == 0.0 || level == 1.0;
+        if !at_once && !ends && (level - self.level).abs() < LEVEL_STEP {
+            return;
+        }
+        self.level = level;
+        if self.peek.is_none() && !self.peek_told {
+            self.fade_all(level, if at_once { FADE_MS } else { LEVEL_MS });
+        }
+    }
+
     /// The other copy of Deonyx (see helper.rs).
     fn other_pid(&self) -> Option<u32> {
         match self.role {
@@ -556,11 +622,12 @@ impl Manager {
             lmax,
             warm,
             boost: if self.readable { READABLE } else { 1.0 },
+            dim: self.dim,
             split: self.split,
             owner: true,
             photos: rule.photos,
             hidden: self.hidden(),
-            strength: if self.peek.is_some() || self.peek_told { 0.0 } else { 1.0 },
+            strength: if self.peek.is_some() || self.peek_told { 0.0 } else { self.level },
             fade_in: self.fade_new.is_some_and(|t| t > Instant::now()),
             gap: self.gap(),
         }
@@ -767,6 +834,8 @@ impl Manager {
         self.warm = cfg.warm.clamp(0.0, 1.0);
         self.schedule = (cfg.schedule, minutes(&cfg.from), minutes(&cfg.to));
         self.place = (cfg.place.lat, cfg.place.lon);
+        self.gradual = cfg.gradual;
+        self.dim = cfg.dim.clamp(0.0, DIM_MAX);
         self.paused_until = cfg.paused_until;
         self.battery_mode = cfg.battery;
         self.screen_rules = cfg.screens;
@@ -781,6 +850,7 @@ impl Manager {
             self.register_app_keys(&cfg.apps);
         }
         self.in_time = self.schedule_allows();
+        self.follow_level(true);
         // Switched on, or an app added or switched on: fade in.
         let gained = self.rules.keys().any(|k| !before.contains(k));
         if (!was_active && self.active()) || gained {
@@ -1014,7 +1084,7 @@ impl Manager {
             Role::Helper { parent } if kind == helper::PEEK && from == parent => {
                 if let Ok(on) = serde_json::from_slice::<bool>(bytes) {
                     self.peek_told = on;
-                    self.fade_all(if on { 0.0 } else { 1.0 }, PEEK_MS);
+                    self.fade_all(if on { 0.0 } else { self.level }, PEEK_MS);
                 }
             }
             _ => {}
@@ -1063,6 +1133,7 @@ impl Manager {
             l.params.lmax = look.lmax;
             l.params.warm = look.warm;
             l.params.boost = look.boost;
+            l.params.dim = look.dim;
             l.manual = rule.areas.clone();
             l.protect = protect;
             l.set_find_photos(rule.photos);
@@ -1102,6 +1173,7 @@ impl Manager {
         let gap_changed = battery != self.on_battery && self.battery_mode == "slow";
         self.on_battery = battery;
         self.in_time = self.schedule_allows();
+        self.follow_level(false);
         if was != self.active() {
             if self.active() {
                 self.fade_new = Some(Instant::now() + Duration::from_millis(1500));
@@ -1140,7 +1212,7 @@ impl Manager {
             return;
         }
         self.peek = None;
-        self.fade_all(1.0, PEEK_MS);
+        self.fade_all(self.level, PEEK_MS);
         self.tell_helper_peek(false);
     }
 
@@ -1153,8 +1225,9 @@ impl Manager {
     fn publish(&mut self) {
         let mut running: HashMap<String, usize> = HashMap::new();
         for l in self.layers.values() {
-            // Count main windows only, not menus and tooltips.
-            if unsafe { GetWindow(l.target, GW_OWNER) }.is_err() && !l.left_as_is() {
+            // Count main windows only, not menus and tooltips. A window that
+            // is dark already counts while it's dimmed.
+            if unsafe { GetWindow(l.target, GW_OWNER) }.is_err() && (!l.left_as_is() || self.dim > 0.0) {
                 *running.entry(l.exe.clone()).or_default() += 1;
             }
         }
@@ -1682,6 +1755,9 @@ fn run(cfg: Config, role: Role, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus,
         warm: 0.0,
         schedule: ("always".into(), 0, 0),
         place: (0.0, 0.0),
+        gradual: false,
+        level: 1.0,
+        dim: 0.0,
         enabled: true,
         in_time: true,
         paused_until: 0,
@@ -1861,4 +1937,30 @@ fn run(cfg: Config, role: Role, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus,
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ease;
+
+    #[test]
+    fn eases_in_after_the_start_and_out_before_the_end() {
+        // 20:00 to 07:00, past midnight.
+        let (from, to) = (20.0 * 60.0, 7.0 * 60.0);
+        assert_eq!(ease(from, to, from), 0.0);
+        assert!((ease(from, to, from + 15.0) - 0.5).abs() < 1e-6);
+        assert_eq!(ease(from, to, from + 30.0), 1.0);
+        assert_eq!(ease(from, to, 30.0), 1.0);
+        assert!((ease(from, to, to - 15.0) - 0.5).abs() < 1e-6);
+        assert_eq!(ease(from, to, to), 0.0);
+        // Outside the stretch the schedule is off anyway.
+        assert_eq!(ease(from, to, 12.0 * 60.0), 1.0);
+    }
+
+    #[test]
+    fn a_short_stretch_never_gets_fully_dark() {
+        // 40 minutes: the middle is 20 minutes from either end.
+        let v = ease(600.0, 640.0, 620.0);
+        assert!(v > 0.6 && v < 1.0, "{v}");
+    }
 }

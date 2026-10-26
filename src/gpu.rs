@@ -33,7 +33,9 @@ pub struct Params {
     pub strength: f32,
     /// Curve on the flipped lightness: 1 leaves it, below 1 lifts faint text.
     pub boost: f32,
-    pub pad: f32,
+    /// Windows that are dark already (amount 0) are dimmed this much rather
+    /// than shown as they are; 0 leaves them.
+    pub dim: f32,
 }
 
 pub struct Gpu {
