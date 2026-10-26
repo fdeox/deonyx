@@ -724,11 +724,8 @@ impl Manager {
             return;
         }
         let Some(rule) = self.rule_for(h) else { return };
-        match Layer::new(&self.gpu, h, &self.look(&rule, h), self.desk.is_some()) {
+        match Layer::new(&self.gpu, h, &self.look(&rule, h), self.desk.is_some(), self.frame_event) {
             Ok(mut l) => {
-                if let Err(e) = l.on_frame_arrived(self.frame_event) {
-                    note!("frame notification failed: {e}");
-                }
                 l.exe = rule.key();
                 l.manual = rule.areas.clone();
                 if std::env::var_os("DEONYX_DEBUG").is_some() {
@@ -748,13 +745,20 @@ impl Manager {
                 self.publish();
             }
             Err(e) => {
-                // Window capture hangs on this PC: copy the screen from now on.
-                if self.desk.is_none() && crate::store::capture_stuck() {
+                // Windows' capture service is stuck: copy the screen from now
+                // on, for the layers already there too (they draw from the
+                // copy once it exists, and must stay out of it).
+                if self.desk.is_none() && crate::wgc::stuck() {
                     match Desktop::new(&self.gpu) {
                         Ok(d) => {
                             note!("copying the screen instead of capturing windows");
                             self.desk = Some(d);
+                            self.update_sharing();
+                            for l in &self.leaving {
+                                l.hide_from_capture(true);
+                            }
                             self.ignored.clear();
+                            self.publish();
                             return self.add(h);
                         }
                         Err(e) => note!("screen copy failed: {e}"),

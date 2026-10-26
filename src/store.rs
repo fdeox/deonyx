@@ -3,20 +3,15 @@
 // the Run key), and the administrator task isn't there. The same exe works
 // both ways; this tells which one it is.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::RecvTimeoutError;
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use windows::core::{factory, Result, HSTRING};
+use windows::core::{Result, HSTRING};
 use windows::ApplicationModel::Activation::ActivationKind;
 use windows::ApplicationModel::{AppInstance, StartupTask, StartupTaskState};
-use windows::Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureAccess, GraphicsCaptureAccessKind, GraphicsCaptureItem};
-use windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
-use windows::Graphics::DirectX::DirectXPixelFormat;
+use windows::Graphics::Capture::{GraphicsCaptureAccess, GraphicsCaptureAccessKind};
 use windows::Security::Authorization::AppCapabilityAccess::{AppCapability, AppCapabilityAccessStatus};
-use windows::Win32::Foundation::{APPMODEL_ERROR_NO_PACKAGE, HWND};
-use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
+use windows::Win32::Foundation::APPMODEL_ERROR_NO_PACKAGE;
 use windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 
@@ -95,75 +90,6 @@ pub fn capture_allowed() -> bool {
         }
         status.is_ok_and(|(p, b)| p == AppCapabilityAccessStatus::Allowed && b == AppCapabilityAccessStatus::Allowed)
     })
-}
-
-/// Set once window capture didn't answer in time (capture_answers).
-static STUCK: AtomicBool = AtomicBool::new(false);
-
-pub fn capture_stuck() -> bool {
-    STUCK.load(Ordering::Relaxed)
-}
-
-/// Whether capturing a window really answers. Windows' capture service can
-/// get stuck (seen after a Store copy's first permission questions): from
-/// then on every capture, in every program, waits for good until Windows
-/// restarts, and it would take the whole engine with it. So the first
-/// capture is tried on a thread of its own; if it hasn't started within a
-/// few seconds, layers copy the screen instead (the engine switches when it
-/// sees capture_stuck). DEONYX_CAPTURE_PROBE=hang in a test copy pretends
-/// Windows never answers.
-pub fn capture_answers(target: HWND, device: &IDirect3DDevice) -> bool {
-    static ANSWERED: AtomicBool = AtomicBool::new(false);
-    if STUCK.load(Ordering::Relaxed) {
-        return false;
-    }
-    if ANSWERED.load(Ordering::Relaxed) {
-        return true;
-    }
-    let hang = std::env::var_os("DEONYX_CONFIG_DIR").is_some() && std::env::var("DEONYX_CAPTURE_PROBE").as_deref() == Ok("hang");
-    struct Device(IDirect3DDevice);
-    // The D3D11 device behind it is free-threaded; only the wrapper isn't marked.
-    unsafe impl Send for Device {}
-    let device = Device(device.clone());
-    let window = target.0 as isize;
-    let (tx, rx) = std::sync::mpsc::channel();
-    let started = Instant::now();
-    std::thread::spawn(move || {
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        }
-        if hang {
-            std::thread::sleep(Duration::from_secs(3600));
-        }
-        let try_it = move || -> Result<()> {
-            let device = device;
-            let interop = factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
-            let item: GraphicsCaptureItem = unsafe { interop.CreateForWindow(HWND(window as *mut _))? };
-            let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(&device.0, DirectXPixelFormat::B8G8R8A8UIntNormalized, 1, item.Size()?)?;
-            // This is where a stuck service holds the call.
-            let session = pool.CreateCaptureSession(&item)?;
-            let _ = session.SetIsBorderRequired(false);
-            session.StartCapture()?;
-            let _ = session.Close();
-            let _ = pool.Close();
-            Ok(())
-        };
-        let _ = tx.send(try_it());
-    });
-    match rx.recv_timeout(Duration::from_secs(4)) {
-        Ok(Ok(())) => {
-            crate::note!("window capture answers in {} ms", started.elapsed().as_millis());
-            ANSWERED.store(true, Ordering::Relaxed);
-            true
-        }
-        // A window that can't be captured says so at once: not a hang.
-        Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => true,
-        Err(RecvTimeoutError::Timeout) => {
-            crate::note!("window capture didn't answer in 4 s (Windows' capture service is stuck until Windows restarts)");
-            STUCK.store(true, Ordering::Relaxed);
-            false
-        }
-    }
 }
 
 /// Windows started the package with the user, through its startup task:

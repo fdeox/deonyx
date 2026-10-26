@@ -2,6 +2,14 @@
 // languages show the English list.
 
 const NEWS = {
+  "0.3.1": {
+    en: [
+      "If Windows' screen capture stops answering (it can happen after its permission questions and lasts until Windows restarts), Deonyx notices within a few seconds and keeps darkening by copying the screen instead of freezing.",
+    ],
+    tr: [
+      "Windows'un ekran yakalaması cevap vermeyi bırakırsa (izin sorularından sonra olabiliyor ve Windows yeniden başlayana kadar sürüyor) Deonyx bunu birkaç saniyede fark ediyor ve donmak yerine ekranı kopyalayarak karartmaya devam ediyor.",
+    ],
+  },
   "0.3.0": {
     en: [
       "Change slowly: with set hours or sunset to sunrise, darkening comes in over half an hour and goes the same way at the end. Turn it on under When.",

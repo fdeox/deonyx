@@ -1,7 +1,8 @@
 // Windows 10 before build 20348 draws a yellow border around every window
 // captured with Windows.Graphics.Capture, and apps can't turn it off; on
 // newer Windows a Store copy may only capture windows, and without the
-// border, with the user's yes (store::capture_allowed). There Deonyx copies
+// border, with the user's yes (store::capture_allowed); and Windows' capture
+// service can get stuck (wgc.rs). There Deonyx copies
 // the screen instead (DXGI Desktop Duplication). Its layers
 // are hidden from screen capture, so the copy shows the real windows under
 // them, and each layer takes the part of the screen its window covers.

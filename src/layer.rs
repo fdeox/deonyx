@@ -4,10 +4,7 @@
 use std::ffi::c_void;
 use std::time::{Duration, Instant};
 
-use windows::core::{factory, w, Interface, Result};
-use windows::Foundation::TimeSpan;
-use windows::Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession};
-use windows::Graphics::DirectX::DirectXPixelFormat;
+use windows::core::{w, Interface, Result};
 use windows::Graphics::SizeInt32;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Direct3D::D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
@@ -17,10 +14,10 @@ use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Dxgi::*;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::WinRT::Direct3D11::IDirect3DDxgiInterfaceAccess;
-use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::desk::Desktop;
+use crate::wgc::Capture;
 use crate::gpu::{Gpu, Params, MAX_RECTS};
 use crate::photos;
 use crate::win::{frame_rect, height, width};
@@ -128,7 +125,7 @@ pub struct Layer {
     pub overlay: HWND,
     /// Windows.Graphics.Capture; None when the layer copies the screen
     /// instead (see desk.rs).
-    capture: Option<(Direct3D11CaptureFramePool, GraphicsCaptureSession)>,
+    capture: Option<Capture>,
     swap: IDXGISwapChain1,
     /// Kept alive while the layer lives (see-through layers only).
     _comp: Option<(IDCompositionTarget, IDCompositionVisual)>,
@@ -164,31 +161,19 @@ pub struct Layer {
 }
 
 impl Layer {
-    pub fn new(gpu: &Gpu, target: HWND, look: &Look, copy_screen: bool) -> Result<Layer> {
+    pub fn new(gpu: &Gpu, target: HWND, look: &Look, copy_screen: bool, frame_event: HANDLE) -> Result<Layer> {
         unsafe {
             let r = frame_rect(target);
             let (capture, start) = if copy_screen {
                 (None, SizeInt32 { Width: width(&r), Height: height(&r) })
             } else {
-                // Windows could hold these calls for good: without a Store
-                // copy's yes (store::capture_allowed) or once its capture
-                // service is stuck (store::capture_answers). Then don't try.
-                if !crate::store::capture_allowed() || !crate::store::capture_answers(target, &gpu.rt_device) {
+                // A Store copy without the user's yes would wait for good
+                // (store::capture_allowed), so it doesn't even try.
+                if !crate::store::capture_allowed() {
                     return Err(windows::core::Error::from_hresult(windows::Win32::Foundation::E_ACCESSDENIED));
                 }
-                let interop = factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
-                let item: GraphicsCaptureItem = interop.CreateForWindow(target)?;
-                let start = item.Size()?;
-                let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
-                    &gpu.rt_device,
-                    DirectXPixelFormat::B8G8R8A8UIntNormalized,
-                    2,
-                    start,
-                )?;
-                let session = pool.CreateCaptureSession(&item)?;
-                let _ = session.SetIsCursorCaptureEnabled(false);
-                let _ = session.SetIsBorderRequired(false);
-                (Some((pool, session)), start)
+                let (capture, start) = Capture::start(target, &gpu.rt_device, frame_event)?;
+                (Some(capture), start)
             };
 
             let hinst = GetModuleHandleW(None)?;
@@ -299,23 +284,8 @@ impl Layer {
             layer.hide_from_capture(look.hidden || copy_screen);
             layer.set_gap(look.gap);
             layer.make_targets(gpu)?;
-            if let Some((_, session)) = &layer.capture {
-                session.StartCapture()?;
-            }
             Ok(layer)
         }
-    }
-
-    pub fn on_frame_arrived(&self, ev: HANDLE) -> Result<()> {
-        let Some((pool, _)) = &self.capture else { return Ok(()) };
-        let evv = ev.0 as isize;
-        pool.FrameArrived(&windows::Foundation::TypedEventHandler::new(move |_, _| {
-            unsafe {
-                let _ = windows::Win32::System::Threading::SetEvent(HANDLE(evv as *mut c_void));
-            }
-            Ok(())
-        }))?;
-        Ok(())
     }
 
     /// Screen sharing and screenshots see the real window, not the layer.
@@ -330,9 +300,8 @@ impl Layer {
     /// less often, which saves more.
     pub fn set_gap(&mut self, gap: Option<Duration>) {
         self.gap = gap;
-        if let Some((_, session)) = &self.capture {
-            let ticks = gap.map_or(0, |g| g.as_nanos() as i64 / 100);
-            let _ = session.SetMinUpdateInterval(TimeSpan { Duration: ticks });
+        if let Some(c) = &self.capture {
+            c.set_gap(gap.map_or(0, |g| g.as_nanos() as i64 / 100));
         }
     }
 
@@ -497,7 +466,8 @@ impl Layer {
 
     /// Takes the newest captured frame, if any, and draws it darkened.
     pub fn poll(&mut self, gpu: &Gpu, enabled: bool) -> Result<bool> {
-        let Some((pool, _)) = &self.capture else { return Ok(false) };
+        let Some(capture) = &self.capture else { return Ok(false) };
+        let pool = capture.pool();
         let mut latest = None;
         while let Ok(f) = pool.TryGetNextFrame() {
             latest = Some(f);
@@ -508,12 +478,7 @@ impl Layer {
         let want = (cs.Width.max(1) as u32, cs.Height.max(1) as u32);
         if want != self.size {
             self.size = want;
-            pool.Recreate(
-                &gpu.rt_device,
-                DirectXPixelFormat::B8G8R8A8UIntNormalized,
-                2,
-                SizeInt32 { Width: want.0 as i32, Height: want.1 as i32 },
-            )?;
+            capture.resize(&gpu.rt_device, SizeInt32 { Width: want.0 as i32, Height: want.1 as i32 });
             self.make_targets(gpu)?;
         }
         unsafe {
@@ -773,10 +738,7 @@ impl Layer {
 
 impl Drop for Layer {
     fn drop(&mut self) {
-        if let Some((pool, session)) = &self.capture {
-            let _ = session.Close();
-            let _ = pool.Close();
-        }
+        // The capture closes itself on its own thread (wgc.rs).
         unsafe {
             let _ = DestroyWindow(self.overlay);
         }

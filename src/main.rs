@@ -29,6 +29,7 @@ mod screens;
 mod select;
 mod store;
 mod sun;
+mod wgc;
 mod win;
 
 use std::sync::atomic::{AtomicBool, Ordering};
