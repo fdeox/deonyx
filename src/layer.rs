@@ -170,9 +170,10 @@ impl Layer {
             let (capture, start) = if copy_screen {
                 (None, SizeInt32 { Width: width(&r), Height: height(&r) })
             } else {
-                // A Store copy without the user's yes would hang here (see
-                // store::capture_allowed), so it doesn't even try.
-                if !crate::store::capture_allowed() {
+                // Windows could hold these calls for good: without a Store
+                // copy's yes (store::capture_allowed) or once its capture
+                // service is stuck (store::capture_answers). Then don't try.
+                if !crate::store::capture_allowed() || !crate::store::capture_answers(target, &gpu.rt_device) {
                     return Err(windows::core::Error::from_hresult(windows::Win32::Foundation::E_ACCESSDENIED));
                 }
                 let interop = factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;

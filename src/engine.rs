@@ -748,6 +748,18 @@ impl Manager {
                 self.publish();
             }
             Err(e) => {
+                // Window capture hangs on this PC: copy the screen from now on.
+                if self.desk.is_none() && crate::store::capture_stuck() {
+                    match Desktop::new(&self.gpu) {
+                        Ok(d) => {
+                            note!("copying the screen instead of capturing windows");
+                            self.desk = Some(d);
+                            self.ignored.clear();
+                            return self.add(h);
+                        }
+                        Err(e) => note!("screen copy failed: {e}"),
+                    }
+                }
                 note!("capture failed ({}): {e}", class_name(h));
                 self.ignored.insert(key);
             }
