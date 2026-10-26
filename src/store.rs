@@ -8,6 +8,8 @@ use std::sync::OnceLock;
 use windows::core::{Result, HSTRING};
 use windows::ApplicationModel::Activation::ActivationKind;
 use windows::ApplicationModel::{AppInstance, StartupTask, StartupTaskState};
+use windows::Graphics::Capture::{GraphicsCaptureAccess, GraphicsCaptureAccessKind};
+use windows::Security::Authorization::AppCapabilityAccess::{AppCapability, AppCapabilityAccessStatus};
 use windows::Win32::Foundation::APPMODEL_ERROR_NO_PACKAGE;
 use windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
@@ -43,6 +45,31 @@ fn task() -> Result<StartupTask> {
 
 fn on(s: StartupTaskState) -> bool {
     s == StartupTaskState::Enabled || s == StartupTaskState::EnabledByPolicy
+}
+
+/// Whether windows can be captured without the yellow border Windows draws
+/// around them. Programs outside a package always may turn it off. A Store
+/// copy needs the user's yes (Settings > Privacy & security > Screenshot
+/// borders): asked once, the first time, and the answer sticks. Without it,
+/// layers copy the screen instead (desk.rs), which shows no border at all.
+pub fn borderless_allowed() -> bool {
+    static ALLOWED: OnceLock<bool> = OnceLock::new();
+    *ALLOWED.get_or_init(|| {
+        if !packaged() {
+            return true;
+        }
+        // Test copies never wait on a question nobody is there to answer.
+        let ask = std::env::var_os("DEONYX_CONFIG_DIR").is_none();
+        let status = on_own_thread(move || {
+            let now = AppCapability::Create(&HSTRING::from("graphicsCaptureWithoutBorder"))?.CheckAccess()?;
+            if now == AppCapabilityAccessStatus::UserPromptRequired && ask {
+                return GraphicsCaptureAccess::RequestAccessAsync(GraphicsCaptureAccessKind::Borderless)?.get();
+            }
+            Ok(now)
+        });
+        crate::note!("capture without the border: {}", status.as_ref().map_or("unknown".to_string(), |s| s.0.to_string()));
+        status.is_ok_and(|s| s == AppCapabilityAccessStatus::Allowed)
+    })
 }
 
 /// Windows started the package with the user, through its startup task:

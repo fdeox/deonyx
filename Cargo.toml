@@ -40,6 +40,7 @@ features = [
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
+    "Security_Authorization_AppCapabilityAccess",
     "Win32_Security",
     "Win32_Storage_EnhancedStorage",
     "Win32_Storage_Packaging_Appx",
