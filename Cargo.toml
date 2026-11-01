@@ -1,6 +1,6 @@
 [package]
 name = "deonyx"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 description = "Dark mode for any Windows app"
 license = "GPL-3.0-only"
@@ -44,6 +44,7 @@ features = [
     "Win32_Security",
     "Win32_Storage_EnhancedStorage",
     "Win32_Storage_Packaging_Appx",
+    "Win32_Storage_Xps",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",

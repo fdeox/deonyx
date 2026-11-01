@@ -249,3 +249,14 @@ Object.assign(STRINGS.it, {
   "profiles.update": "Salva le modifiche",
   "profiles.undo": "Annulla",
 });
+
+// 0.4: colour themes, bright windows on the first start.
+Object.assign(STRINGS.it, {
+  "look.theme": "Tema colori",
+  "look.theme.hint": "La tua palette preferita su ogni app. Le parti colorate mantengono i loro colori.",
+  "welcome.apps.title": "Queste sembrano chiare",
+  "welcome.apps.text": "Finestre aperte che Deonyx può scurire. Togli la spunta a quelle che preferisci lasciare come sono.",
+  "welcome.apps.wait": "Sto guardando le finestre aperte…",
+  "welcome.apps.none": "Al momento non ci sono finestre chiare aperte. Puoi aggiungere app quando vuoi.",
+  "welcome.theme": "Oppure un tema colori",
+});

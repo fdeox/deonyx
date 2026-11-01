@@ -90,6 +90,189 @@ pub fn running() -> Vec<Running> {
     out
 }
 
+/// A program with a bright window open, for the first start: what to show
+/// and how bright it is.
+#[derive(Clone, Serialize)]
+pub struct Bright {
+    pub exe: String,
+    pub name: String,
+    pub title: String,
+    pub icon: Option<String>,
+    /// A small picture of the window, as a PNG data URL.
+    pub thumb: String,
+    /// Mean cube-root luminance, like the engine measures (0..1).
+    pub light: f32,
+}
+
+/// How wide the pictures are, and how long one window may take to draw
+/// itself (a hung program never does).
+const THUMB_W: i32 = 480;
+const PRINT_WAIT: Duration = Duration::from_millis(1500);
+
+/// The open programs whose biggest window is light, brightest picture
+/// first: the ones worth darkening. A program's own window only, at most 8.
+pub fn bright() -> Vec<Bright> {
+    let me = std::process::id();
+    let mut best: HashMap<String, (i64, HWND, String)> = HashMap::new();
+    for h in top_level_windows() {
+        unsafe {
+            if !IsWindowVisible(h).as_bool() || IsIconic(h).as_bool() || !is_top_level(h) || is_cloaked(h) || GetWindow(h, GW_OWNER).is_ok() {
+                continue;
+            }
+            if GetWindowLongW(h, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW.0 != 0 || IsHungAppWindow(h).as_bool() {
+                continue;
+            }
+        }
+        let pid = window_pid(h);
+        if pid == me || title(h).trim().is_empty() {
+            continue;
+        }
+        let r = crate::win::frame_rect(h);
+        let (w, hh) = (crate::win::width(&r), crate::win::height(&r));
+        if w < 240 || hh < 160 {
+            continue;
+        }
+        let Some(path) = exe_path(pid) else { continue };
+        let exe = path.rsplit('\\').next().unwrap_or(&path).to_ascii_lowercase();
+        if SKIP.contains(&exe.as_str()) {
+            continue;
+        }
+        let area = w as i64 * hh as i64;
+        if best.get(&exe).is_none_or(|(a, _, _)| area > *a) {
+            best.insert(exe, (area, h, path));
+        }
+    }
+    // The biggest ones, all drawn at the same time; whatever isn't done by
+    // the deadline is left out.
+    let mut found: Vec<(i64, HWND, String)> = best.into_values().collect();
+    found.sort_by_key(|(a, _, _)| -a);
+    found.truncate(12);
+    let jobs: Vec<_> = found
+        .into_iter()
+        .map(|(_, h, path)| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let hwnd = h.0 as isize;
+            std::thread::spawn(move || {
+                let _ = tx.send(unsafe { print(HWND(hwnd as *mut c_void)) });
+            });
+            (h, path, rx)
+        })
+        .collect();
+    let deadline = Instant::now() + PRINT_WAIT;
+    let mut out: Vec<Bright> = jobs
+        .into_iter()
+        .filter_map(|(h, path, rx)| {
+            let (px, w, hh) = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok().flatten()?;
+            let light = lightness(&px);
+            if light < 0.5 {
+                return None;
+            }
+            let d = describe(&path);
+            Some(Bright { exe: d.exe, name: d.name, title: title(h), icon: d.icon, thumb: thumb_png(&px, w, hh)?, light })
+        })
+        .collect();
+    out.sort_by(|a, b| b.light.total_cmp(&a.light));
+    out.truncate(8);
+    out
+}
+
+/// The window drawn into a small BGRA picture, THUMB_W wide; None if it
+/// doesn't draw or comes out blank. A hung program never draws: callers
+/// wait only so long (bright).
+unsafe fn print(h: HWND) -> Option<(Vec<u8>, i32, i32)> {
+    let mut r = RECT::default();
+    GetWindowRect(h, &mut r).ok()?;
+    let (w, hh) = (r.right - r.left, r.bottom - r.top);
+    // The picture covers the window's invisible resize borders too; only
+    // the part that shows is kept.
+    let f = crate::win::frame_rect(h);
+    let (ox, oy) = ((f.left - r.left).clamp(0, w - 1), (f.top - r.top).clamp(0, hh - 1));
+    let (cw, ch) = ((f.right - f.left).clamp(1, w - ox), (f.bottom - f.top).clamp(1, hh - oy));
+    let screen = GetDC(None);
+    let dc = CreateCompatibleDC(Some(screen));
+    let bmi = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w,
+            biHeight: -hh,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut bits: *mut c_void = std::ptr::null_mut();
+    let bmp = CreateDIBSection(Some(dc), &bmi, DIB_RGB_COLORS, &mut bits, None, 0);
+    ReleaseDC(None, screen);
+    let Ok(bmp) = bmp else {
+        let _ = DeleteDC(dc);
+        return None;
+    };
+    let old = SelectObject(dc, bmp.into());
+    // PW_RENDERFULLCONTENT: also windows drawn with the GPU.
+    let ok = windows::Win32::Storage::Xps::PrintWindow(h, dc, windows::Win32::Storage::Xps::PRINT_WINDOW_FLAGS(2)).as_bool();
+    let full = std::slice::from_raw_parts(bits as *const u8, (w * hh * 4) as usize);
+    // Box-averaged down to THUMB_W wide.
+    let tw = THUMB_W.min(cw);
+    let th = (ch as i64 * tw as i64 / cw as i64).max(1) as i32;
+    let mut small = vec![0u8; (tw * th * 4) as usize];
+    for y in 0..th {
+        let (y0, y1) = (y * ch / th, ((y + 1) * ch / th).max(y * ch / th + 1));
+        for x in 0..tw {
+            let (x0, x1) = (x * cw / tw, ((x + 1) * cw / tw).max(x * cw / tw + 1));
+            let mut sum = [0u32; 3];
+            let mut n = 0u32;
+            for yy in (y0..y1).step_by(2) {
+                for xx in (x0..x1).step_by(2) {
+                    let i = (((oy + yy) * w + ox + xx) * 4) as usize;
+                    for c in 0..3 {
+                        sum[c] += full[i + c] as u32;
+                    }
+                    n += 1;
+                }
+            }
+            let o = ((y * tw + x) * 4) as usize;
+            for c in 0..3 {
+                small[o + c] = (sum[c] / n.max(1)) as u8;
+            }
+            small[o + 3] = 255;
+        }
+    }
+    SelectObject(dc, old);
+    let _ = DeleteObject(bmp.into());
+    let _ = DeleteDC(dc);
+    // A window that didn't draw (or drew nothing) is all one colour.
+    let first = &small[..3];
+    if !ok || small.chunks(4).all(|p| &p[..3] == first) {
+        return None;
+    }
+    Some((small, tw, th))
+}
+
+fn lightness(bgra: &[u8]) -> f32 {
+    let lin = |v: u8| (v as f64 / 255.0).powf(2.2);
+    let (mut sum, mut n) = (0.0f64, 0u32);
+    for p in bgra.chunks(4) {
+        sum += (0.0722 * lin(p[0]) + 0.7152 * lin(p[1]) + 0.2126 * lin(p[2])).cbrt();
+        n += 1;
+    }
+    (sum / n.max(1) as f64) as f32
+}
+
+fn thumb_png(bgra: &[u8], w: i32, h: i32) -> Option<String> {
+    let rgb: Vec<u8> = bgra.chunks(4).flat_map(|p| [p[2], p[1], p[0]]).collect();
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, w as u32, h as u32);
+        enc.set_color(png::ColorType::Rgb);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut wr = enc.write_header().ok()?;
+        wr.write_image_data(&rgb).ok()?;
+    }
+    Some(format!("data:image/png;base64,{}", base64(&out)))
+}
+
 /// Name and icon of a program file.
 pub fn describe(path: &str) -> Running {
     let exe = path.rsplit(['\\', '/']).next().unwrap_or(path).to_string();

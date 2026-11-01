@@ -2,6 +2,26 @@
 // languages show the English list.
 
 const NEWS = {
+  "0.4.0": {
+    en: [
+      "Colour themes: Dracula, Nord, Catppuccin, Tokyo Night, Gruvbox, Solarized, One Dark and Rosé Pine, on every app. Colourful parts keep their colours. Find them under Look.",
+      "A new first start: Deonyx shows the bright windows you have open, with pictures, and darkens the ones you pick in one go. The look you choose is shown on one of them.",
+      "If Deonyx ever stops answering, its darkening steps aside within two seconds, so nothing on your screen looks frozen, and it comes back once Deonyx answers again.",
+      "Pages that turn dark or light (a browser going from page to page) show the right way on the very frame they change: darkening no longer switches off and on for a moment.",
+      "After a graphics driver update or restart, Deonyx starts over on its own instead of leaving a frozen picture over your apps.",
+      "Photos keep their colours while you scroll: their frames now move with the page instead of trailing behind it.",
+      "Windows 10: a screen plugged in or set to another size later is darkened too, and a dark window lying over a light one no longer stops the light one darkening.",
+    ],
+    tr: [
+      "Renk temaları: Dracula, Nord, Catppuccin, Tokyo Night, Gruvbox, Solarized, One Dark ve Rosé Pine, her uygulamada. Renkli kısımlar kendi renklerini koruyor. Görünüm sayfasında.",
+      "Yeni ilk açılış: Deonyx açık olan parlak pencereleri resimleriyle gösteriyor, seçtiklerini tek seferde karartıyor. Seçtiğin görünüm de onlardan birinin üstünde gösteriliyor.",
+      "Deonyx bir gün cevap vermez olursa karartma iki saniye içinde kenara çekiliyor, ekranında donmuş görünen bir şey kalmıyor. Deonyx toparlanınca karartma geri geliyor.",
+      "Koyuya ya da açığa dönen sayfalar (tarayıcıda sayfadan sayfaya geçerken) değiştikleri karede doğru gösteriliyor: karartma artık bir an kapanıp açılmıyor.",
+      "Ekran kartı sürücüsü güncellenince ya da yeniden başlayınca Deonyx, uygulamaların üstünde donmuş bir görüntü bırakmak yerine kendini baştan kuruyor.",
+      "Kaydırırken fotoğraflar renklerini koruyor: çerçeveleri artık sayfanın gerisinde kalmıyor, sayfayla birlikte kayıyor.",
+      "Windows 10: sonradan takılan ya da çözünürlüğü değişen ekranlar da kararıyor, açık bir pencerenin üstüne koyu bir pencere gelince açık olan kararmayı bırakmıyor.",
+    ],
+  },
   "0.3.1": {
     en: [
       "If Windows' screen capture stops answering (it can happen after its permission questions and lasts until Windows restarts), Deonyx notices within a few seconds and keeps darkening by copying the screen instead of freezing.",

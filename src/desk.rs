@@ -70,24 +70,39 @@ pub struct Desktop {
     outputs: Vec<Output>,
 }
 
-impl Desktop {
-    /// The screens of the GPU Deonyx draws with.
-    pub fn new(gpu: &Gpu) -> Result<Desktop> {
-        let dxgi: IDXGIDevice = gpu.device.cast()?;
-        let adapter = unsafe { dxgi.GetAdapter()? };
-        let mut outputs = Vec::new();
-        let mut i = 0;
-        while let Ok(o) = unsafe { adapter.EnumOutputs(i) } {
-            i += 1;
-            let Ok(output) = o.cast::<IDXGIOutput1>() else { continue };
-            let Ok(desc) = (unsafe { output.GetDesc() }) else { continue };
-            if !desc.AttachedToDesktop.as_bool() || desc.Rotation != DXGI_MODE_ROTATION_IDENTITY {
-                // A turned screen comes out of the duplication on its side.
-                continue;
-            }
-            outputs.push(Output { output, rect: desc.DesktopCoordinates, dup: None, tex: None, retry: Instant::now() });
+/// The screens of the GPU Deonyx draws with, and where each sits.
+fn screens(gpu: &Gpu) -> Result<Vec<(IDXGIOutput1, RECT)>> {
+    let dxgi: IDXGIDevice = gpu.device.cast()?;
+    let adapter = unsafe { dxgi.GetAdapter()? };
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Ok(o) = unsafe { adapter.EnumOutputs(i) } {
+        i += 1;
+        let Ok(output) = o.cast::<IDXGIOutput1>() else { continue };
+        let Ok(desc) = (unsafe { output.GetDesc() }) else { continue };
+        if !desc.AttachedToDesktop.as_bool() || desc.Rotation != DXGI_MODE_ROTATION_IDENTITY {
+            // A turned screen comes out of the duplication on its side.
+            continue;
         }
+        out.push((output, desc.DesktopCoordinates));
+    }
+    Ok(out)
+}
+
+impl Desktop {
+    pub fn new(gpu: &Gpu) -> Result<Desktop> {
+        let outputs = screens(gpu)?
+            .into_iter()
+            .map(|(output, rect)| Output { output, rect, dup: None, tex: None, retry: Instant::now() })
+            .collect();
         Ok(Desktop { outputs })
+    }
+
+    /// A screen was plugged in, taken away, moved, turned or set to another
+    /// size since: the copy has to start over.
+    pub fn outdated(&self, gpu: &Gpu) -> bool {
+        let Ok(now) = screens(gpu) else { return false };
+        now.len() != self.outputs.len() || now.iter().zip(&self.outputs).any(|((_, r), o)| *r != o.rect)
     }
 
     /// Takes the screens' newest pictures. Returns the parts of the desktop

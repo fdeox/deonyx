@@ -10,6 +10,7 @@ use windows::Win32::Graphics::Direct3D::Fxc::D3DCompile;
 use windows::Win32::Graphics::Direct3D::*;
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::DirectComposition::{DCompositionCreateDevice, IDCompositionDevice};
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R32_FLOAT, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Dxgi::*;
 use windows::Win32::System::WinRT::Direct3D11::CreateDirect3D11DeviceFromDXGIDevice;
 
@@ -36,6 +37,13 @@ pub struct Params {
     /// Windows that are dark already (amount 0) are dimmed this much rather
     /// than shown as they are; 0 leaves them.
     pub dim: f32,
+    /// 1: a frame that is clearly dark or clearly light on average decides
+    /// at once, on the GPU (see shader.hlsl).
+    pub auto: f32,
+    pub _pad: [f32; 3],
+    /// A colour theme (config::tone): background a, b and text a, b in
+    /// OKLab; zeros keep the greys grey.
+    pub tone: [f32; 4],
 }
 
 pub struct Gpu {
@@ -47,6 +55,12 @@ pub struct Gpu {
     pub ps: ID3D11PixelShader,
     /// Rates 4x4 blocks for looking like a photo (see photos.rs).
     pub photo: ID3D11PixelShader,
+    /// Measures a frame's lightness into one pixel, which the main pass
+    /// reads (shader.hlsl level, amount_now). Shared: layers draw one after
+    /// another.
+    pub level: ID3D11PixelShader,
+    pub level_rtv: ID3D11RenderTargetView,
+    pub level_srv: ID3D11ShaderResourceView,
     pub cb: ID3D11Buffer,
     /// See-through layers go through DirectComposition. None falls back to
     /// opaque layers (DEONYX_OPAQUE=1, or if it isn't available).
@@ -113,6 +127,26 @@ impl Gpu {
             let vsb = compile(b"vs\0", b"vs_5_0\0")?;
             let psb = compile(b"ps\0", b"ps_5_0\0")?;
             let phb = compile(b"photo\0", b"ps_5_0\0")?;
+            let lvb = compile(b"level\0", b"ps_5_0\0")?;
+            let mut level = None;
+            device.CreatePixelShader(bytes(&lvb), None, Some(&mut level))?;
+            let ld = D3D11_TEXTURE2D_DESC {
+                Width: 1,
+                Height: 1,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_R32_FLOAT,
+                SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32,
+                ..Default::default()
+            };
+            let mut lt = None;
+            device.CreateTexture2D(&ld, None, Some(&mut lt))?;
+            let lt = lt.unwrap();
+            let (mut level_rtv, mut level_srv) = (None, None);
+            device.CreateRenderTargetView(&lt, None, Some(&mut level_rtv))?;
+            device.CreateShaderResourceView(&lt, None, Some(&mut level_srv))?;
             let mut vs = None;
             let mut ps = None;
             let mut photo = None;
@@ -135,6 +169,9 @@ impl Gpu {
                 vs: vs.unwrap(),
                 ps: ps.unwrap(),
                 photo: photo.unwrap(),
+                level: level.unwrap(),
+                level_rtv: level_rtv.unwrap(),
+                level_srv: level_srv.unwrap(),
                 cb: cb.unwrap(),
                 dcomp,
             })

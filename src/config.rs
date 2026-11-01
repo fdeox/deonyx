@@ -66,6 +66,10 @@ impl AppRule {
     pub fn lightness(&self, style: &str) -> (f32, f32) {
         let d = self.darkness.clamp(0.0, 1.0);
         let t = self.text.clamp(0.0, 1.0);
+        // A theme's own colours at the usual darkness (0.6) and text (0.7).
+        if let Some(th) = theme(style) {
+            return ((th.bg[0] * (1.6 - d)).clamp(0.0, 0.6), (th.fg[0] * (0.93 + 0.1 * t)).min(0.98));
+        }
         match style {
             // Backgrounds go (nearly) pitch black: OLED screens switch those
             // pixels off.
@@ -77,6 +81,35 @@ impl AppRule {
             _ => (0.40 - 0.28 * d, 0.74 + 0.22 * t),
         }
     }
+}
+
+/// A colour theme: what a white background and black text become, as OKLab
+/// lightness and colour (L, a, b). Everything in between takes the colour
+/// between them; colourful parts keep their own hue.
+pub struct Theme {
+    pub bg: [f32; 3],
+    pub fg: [f32; 3],
+}
+
+/// The themes, by their style name (ui/app.js THEMES has the same).
+pub fn theme(style: &str) -> Option<Theme> {
+    let (bg, fg) = match style {
+        "dracula" => ([0.2882, 0.0029, -0.0219], [0.9775, -0.0023, 0.0076]),
+        "nord" => ([0.3244, -0.0023, -0.0228], [0.9330, -0.0015, -0.0103]),
+        "catppuccin" => ([0.2429, 0.0073, -0.0295], [0.8787, 0.0017, -0.0425]),
+        "tokyo" => ([0.2263, 0.0039, -0.0210], [0.8456, 0.0051, -0.0609]),
+        "gruvbox" => ([0.2768, 0.0, 0.0], [0.8941, 0.0008, 0.0566]),
+        "solarized" => ([0.2673, -0.0373, -0.0311], [0.6979, -0.0152, -0.0046]),
+        "onedark" => ([0.2925, -0.0016, -0.0156], [0.7621, -0.0025, -0.0200]),
+        "rosepine" => ([0.2134, 0.0092, -0.0238], [0.9088, 0.0102, -0.0281]),
+        _ => return None,
+    };
+    Some(Theme { bg, fg })
+}
+
+/// A theme's colours for the shader: background a, b and text a, b.
+pub fn tone(style: &str) -> [f32; 4] {
+    theme(style).map_or([0.0; 4], |t| [t.bg[1], t.bg[2], t.fg[1], t.fg[2]])
 }
 
 /// A program left alone in "every light window" mode.
@@ -125,7 +158,7 @@ pub struct Screen {
     /// Stays the same across restarts and cable swaps (see screens.rs).
     pub id: String,
     pub name: String,
-    /// "" for the same look as everywhere, else "gray", "black" or "soft".
+    /// "" for the same look as everywhere, else "gray", "black", "soft", "paper" or a theme (config::theme).
     pub style: String,
     /// Nothing on this screen is darkened.
     pub off: bool,
@@ -156,7 +189,7 @@ pub struct Config {
     /// Darken every light window, not only the apps in the list.
     pub everything: bool,
     pub exclude: Vec<Excluded>,
-    /// "gray", "black" or "soft".
+    /// "gray", "black", "soft", "paper" or a theme (config::theme).
     pub style: String,
     /// 0..1 warm tint, like Night light.
     pub warm: f32,

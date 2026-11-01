@@ -249,3 +249,14 @@ Object.assign(STRINGS.zh, {
   "profiles.update": "保存更改",
   "profiles.undo": "撤销",
 });
+
+// 0.4: colour themes, bright windows on the first start.
+Object.assign(STRINGS.zh, {
+  "look.theme": "配色主题",
+  "look.theme.hint": "把喜欢的配色用到每个应用。彩色部分保留原来的颜色。",
+  "welcome.apps.title": "这些看起来很亮",
+  "welcome.apps.text": "Deonyx 可以调暗的已打开窗口。不想改变的请取消勾选。",
+  "welcome.apps.wait": "正在查看已打开的窗口…",
+  "welcome.apps.none": "现在没有打开的明亮窗口。你随时可以添加应用。",
+  "welcome.theme": "或者一个配色主题",
+});

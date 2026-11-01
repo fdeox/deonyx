@@ -569,9 +569,26 @@ const LIN = Float32Array.from({ length: 256 }, (_, i) => {
 });
 const toSrgb = (c) => (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055);
 
+// The colour themes (config.rs theme has the same): their background and
+// text colour, and both in OKLab.
+const THEMES = [
+  { id: "dracula", name: "Dracula", bg: "#282a36", fg: "#f8f8f2", lab: [[0.2882, 0.0029, -0.0219], [0.9775, -0.0023, 0.0076]] },
+  { id: "nord", name: "Nord", bg: "#2e3440", fg: "#e5e9f0", lab: [[0.3244, -0.0023, -0.0228], [0.933, -0.0015, -0.0103]] },
+  { id: "catppuccin", name: "Catppuccin", bg: "#1e1e2e", fg: "#cdd6f4", lab: [[0.2429, 0.0073, -0.0295], [0.8787, 0.0017, -0.0425]] },
+  { id: "tokyo", name: "Tokyo Night", bg: "#1a1b26", fg: "#c0caf5", lab: [[0.2263, 0.0039, -0.021], [0.8456, 0.0051, -0.0609]] },
+  { id: "gruvbox", name: "Gruvbox", bg: "#282828", fg: "#ebdbb2", lab: [[0.2768, 0, 0], [0.8941, 0.0008, 0.0566]] },
+  { id: "solarized", name: "Solarized", bg: "#002b36", fg: "#93a1a1", lab: [[0.2673, -0.0373, -0.0311], [0.6979, -0.0152, -0.0046]] },
+  { id: "onedark", name: "One Dark", bg: "#282c34", fg: "#abb2bf", lab: [[0.2925, -0.0016, -0.0156], [0.7621, -0.0025, -0.02]] },
+  { id: "rosepine", name: "Rosé Pine", bg: "#191724", fg: "#e0def4", lab: [[0.2134, 0.0092, -0.0238], [0.9088, 0.0102, -0.0281]] },
+];
+const theme = (style) => THEMES.find((x) => x.id === style);
+const styleName = (style) => theme(style)?.name ?? t(`look.${style}`);
+
 // config.rs AppRule::lightness, darkness 0.6 and text 0.7.
 function lightness(style) {
   const d = 0.6, t = 0.7;
+  const th = theme(style);
+  if (th) return [Math.min(0.6, th.lab[0][0] * (1.6 - d)), Math.min(0.98, th.lab[1][0] * (0.93 + 0.1 * t))];
   if (style === "black") return [0.1 * (1 - d), 0.74 + 0.22 * t];
   if (style === "soft") return [0.46 - 0.2 * d, 0.7 + 0.16 * t];
   if (style === "paper") return [0.4 - 0.18 * d, 0.66 + 0.14 * t];
@@ -584,6 +601,8 @@ function flip(img, skip) {
   const warm = style === "paper" ? Math.max(config.warm || 0, 0.55) : config.warm || 0;
   const boost = config.readable !== false ? 0.78 : 1;
   const tint = [1, 1 - 0.14 * warm, 1 - 0.32 * warm];
+  const th = theme(style);
+  const tone = th ? [th.lab[0][1], th.lab[0][2], th.lab[1][1], th.lab[1][2]] : [0, 0, 0, 0];
   const d = img.data;
   const seen = new Map();
   for (let i = 0; i < d.length; i += 4) {
@@ -610,6 +629,9 @@ function flip(img, skip) {
     const keep = 0.95 * Math.min(1, L2 / Math.max(L, 0.001)) ** 0.8;
     A *= keep;
     B *= keep;
+    const u = Math.min(1, Math.max(0, (L2 - lmin) / Math.max(lmax - lmin, 0.001)));
+    A += tone[0] + (tone[2] - tone[0]) * u;
+    B += tone[1] + (tone[3] - tone[1]) * u;
     l = (L2 + 0.3963377774 * A + 0.2158037573 * B) ** 3;
     m = (L2 - 0.1055613458 * A - 0.0638541728 * B) ** 3;
     s = (L2 - 0.0894841775 * A - 1.291485548 * B) ** 3;
@@ -677,12 +699,22 @@ function drawSample(ctx, W, H) {
   return P;
 }
 
-function drawPreview() {
-  const c = $("preview");
+// The sample, or a picture of a real window (`pic`, a loaded image), its
+// right part shown with the current look.
+function paintLook(c, pic) {
   if (!c || !c.offsetParent) return;
   const W = c.width, H = c.height;
   const ctx = c.getContext("2d", { willReadFrequently: true });
-  const P = drawSample(ctx, W, H);
+  let P = { x: 0, y: 0, w: 0, h: 0 };
+  if (pic) {
+    // Fills the canvas from the top, like the window's upper part.
+    const s = Math.max(W / pic.naturalWidth, H / pic.naturalHeight);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, W, H);
+    ctx.drawImage(pic, (W - pic.naturalWidth * s) / 2, 0, pic.naturalWidth * s, pic.naturalHeight * s);
+  } else {
+    P = drawSample(ctx, W, H);
+  }
   const half = Math.round(W * 0.42);
   const img = ctx.getImageData(half, 0, W - half, H);
   flip(img, (x, y) => x + half >= P.x && x + half < P.x + P.w && y >= P.y && y < P.y + P.h);
@@ -690,6 +722,15 @@ function drawPreview() {
   ctx.fillStyle = "#a99cff";
   ctx.fillRect(half - 1, 0, 3, H);
 }
+
+function drawPreview() {
+  paintLook($("preview"), null);
+}
+
+// A swatch per theme: its background with lines of its text colour.
+const themeButtons = (on) => THEMES.map((th) =>
+  `<button data-style="${th.id}" class="${on === th.id ? "on" : ""}" title="${esc(th.name)}">` +
+  `<span class="chip" style="--bg:${th.bg};--fg:${th.fg}"><i></i><i></i></span><span>${esc(th.name)}</span></button>`).join("");
 
 // ---------- pages
 
@@ -725,6 +766,7 @@ $("side").addEventListener("click", (e) => {
 
 function renderLook() {
   document.querySelectorAll("#style button").forEach((b) => b.classList.toggle("on", b.dataset.style === (config.style || "gray")));
+  $("themes").innerHTML = themeButtons(config.style);
   const w = Math.round((config.warm || 0) * 100);
   $("warm").value = w;
   $("warm-val").textContent = w ? `${w}%` : t("off");
@@ -739,12 +781,15 @@ function renderLook() {
   drawPreview();
 }
 
-$("style").addEventListener("click", (e) => {
-  if (!e.target.dataset.style) return;
-  config.style = e.target.dataset.style;
-  save();
-  renderLook();
-});
+for (const id of ["style", "themes"]) {
+  $(id).addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-style]");
+    if (!b) return;
+    config.style = b.dataset.style;
+    save();
+    renderLook();
+  });
+}
 
 $("warm").addEventListener("input", (e) => {
   config.warm = e.target.value / 100;
@@ -792,7 +837,7 @@ function renderScreens() {
       <div class="row" data-screen="${i}">
         <span><strong>${esc(name)}</strong><small>${esc(s.primary ? t("screens.main") : t("screens.other"))}</small></span>
         <select data-act="screen">
-          ${opt("", t("screens.same"))}${opt("gray", t("look.gray"))}${opt("black", t("look.black"))}${opt("soft", t("look.soft"))}${opt("paper", t("look.paper"))}${opt("off", t("screens.off"))}
+          ${opt("", t("screens.same"))}${opt("gray", t("look.gray"))}${opt("black", t("look.black"))}${opt("soft", t("look.soft"))}${opt("paper", t("look.paper"))}${THEMES.map((th) => opt(th.id, th.name)).join("")}${opt("off", t("screens.off"))}
         </select>
       </div>`;
   }).join("");
@@ -1146,20 +1191,71 @@ $("import").addEventListener("click", async () => {
 
 // ---------- first start and updates
 
-const WELCOME = ["welcome.1", "welcome.2", "welcome.3"];
+// What to darken; the bright windows open right now, to pick from (only for
+// "the apps I choose"); a look, shown on one of them; the hotkeys.
+const welcomeSteps = () => ["welcome.1", ...(config.everything ? [] : ["welcome.apps"]), "welcome.2", "welcome.3"];
 let step = 0;
+// The open bright windows (null while Deonyx looks at them), their pictures
+// as loaded images, and the programs picked among them.
+let bright = null;
+const brightPics = new Map();
+const picked = new Set();
+
+function lookForBright() {
+  if (bright) return;
+  const done = (list) => {
+    bright = list.filter((b) => !config.apps.some((a) => key(a.exe) === key(b.exe)));
+    for (const b of bright) {
+      picked.add(key(b.exe));
+      const im = new Image();
+      im.onload = () => !$("welcome").hidden && renderWelcome();
+      im.src = b.thumb;
+      brightPics.set(key(b.exe), im);
+    }
+    if (!$("welcome").hidden) renderWelcome();
+  };
+  invoke("bright_apps").then(done, () => done([]));
+}
+
+// The window the look is shown on: the first one picked, else the sample.
+function welcomePic() {
+  const b = (bright || []).find((x) => picked.has(key(x.exe)));
+  const im = b && brightPics.get(key(b.exe));
+  return im && im.complete && im.naturalWidth ? im : null;
+}
+
+function addPicked() {
+  for (const b of bright || []) {
+    if (picked.has(key(b.exe)) && !config.apps.some((a) => key(a.exe) === key(b.exe))) config.apps.push(newApp(b));
+  }
+  save();
+  renderApps();
+}
 
 function renderWelcome() {
-  const k = WELCOME[step];
+  const list = welcomeSteps();
+  step = Math.min(step, list.length - 1);
+  const k = list[step];
   const keys = config.keys || {};
   let body = `<h2>${esc(t(`${k}.title`))}</h2><p class="hint">${esc(t(`${k}.text`))}</p>`;
-  if (step === 0) {
+  if (k === "welcome.1") {
     body += `<div class="seg" id="w-mode">
       <button data-mode="list" class="${config.everything ? "" : "on"}">${esc(t("mode.list"))}</button>
       <button data-mode="everything" class="${config.everything ? "on" : ""}">${esc(t("mode.everything"))}</button></div>`;
-  } else if (step === 1) {
-    body += `<div class="seg" id="w-style">${["gray", "black", "soft", "paper"].map((s) =>
-      `<button data-style="${s}" class="${(config.style || "gray") === s ? "on" : ""}">${esc(t(`look.${s}`))}</button>`).join("")}</div>`;
+  } else if (k === "welcome.apps") {
+    if (!bright) body += `<p class="hint">${esc(t("welcome.apps.wait"))}</p>`;
+    else if (!bright.length) body += `<p class="hint">${esc(t("welcome.apps.none"))}</p>`;
+    else {
+      body += `<div class="shots">${bright.map((b) => `<label class="shot">
+        <input type="checkbox" data-pick="${esc(key(b.exe))}" ${picked.has(key(b.exe)) ? "checked" : ""}>
+        <img class="pic" src="${b.thumb}" alt="">
+        <span class="name">${b.icon ? `<img src="${b.icon}" alt="">` : ""}<b>${esc(b.name)}</b></span></label>`).join("")}</div>`;
+    }
+  } else if (k === "welcome.2") {
+    body += `<canvas id="w-preview" width="460" height="210" aria-hidden="true"></canvas>
+      <div class="seg small" id="w-style">${["gray", "black", "soft", "paper"].map((s) =>
+        `<button data-style="${s}" class="${(config.style || "gray") === s ? "on" : ""}">${esc(t(`look.${s}`))}</button>`).join("")}</div>
+      <p class="label">${esc(t("welcome.theme"))}</p><div class="themes">${themeButtons(config.style)}</div>`;
   } else {
     body += `<div class="keys-list">
       <span><kbd>${esc(keys.all)}</kbd> ${esc(t("tools.all"))}</span>
@@ -1168,23 +1264,33 @@ function renderWelcome() {
       <span><kbd>${esc(keys.window)}</kbd> ${esc(t("tools.window"))}</span></div>`;
   }
   $("welcome-steps").innerHTML = body;
-  $("welcome-dots").innerHTML = WELCOME.map((_, i) => `<i class="${i === step ? "on" : ""}"></i>`).join("");
-  $("welcome-next").textContent = step === WELCOME.length - 1 ? t("welcome.done") : t("welcome.next");
+  $("welcome-dots").innerHTML = list.map((_, i) => `<i class="${i === step ? "on" : ""}"></i>`).join("");
+  $("welcome-next").textContent = step === list.length - 1 ? t("welcome.done") : t("welcome.next");
+  if (k === "welcome.2") paintLook($("w-preview"), welcomePic());
 }
 
 $("welcome-steps").addEventListener("click", (e) => {
-  if (e.target.dataset.mode) {
-    config.everything = e.target.dataset.mode === "everything";
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.mode) {
+    config.everything = b.dataset.mode === "everything";
     save();
     renderMode();
     renderApps();
   }
-  if (e.target.dataset.style) {
-    config.style = e.target.dataset.style;
+  if (b.dataset.style) {
+    config.style = b.dataset.style;
     save();
     renderLook();
   }
   renderWelcome();
+});
+
+$("welcome-steps").addEventListener("change", (e) => {
+  const k = e.target.dataset.pick;
+  if (!k) return;
+  if (e.target.checked) picked.add(k);
+  else picked.delete(k);
 });
 
 function closeWelcome() {
@@ -1200,7 +1306,9 @@ function closeWelcome() {
 }
 
 $("welcome-next").addEventListener("click", () => {
-  if (step < WELCOME.length - 1) {
+  const list = welcomeSteps();
+  if (list[step] === "welcome.apps") addPicked();
+  if (step < list.length - 1) {
     step++;
     renderWelcome();
   } else {
@@ -1229,6 +1337,8 @@ function firstLook() {
     step = 0;
     renderWelcome();
     $("welcome").hidden = false;
+    // Looks at the open windows while the first step is read.
+    lookForBright();
   } else if (config.seen_version !== version) {
     if (NEWS[version]) showNews();
     else {

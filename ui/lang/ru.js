@@ -249,3 +249,14 @@ Object.assign(STRINGS.ru, {
   "profiles.update": "Сохранить изменения",
   "profiles.undo": "Отменить",
 });
+
+// 0.4: colour themes, bright windows on the first start.
+Object.assign(STRINGS.ru, {
+  "look.theme": "Цветовая тема",
+  "look.theme.hint": "Любимая палитра в каждом приложении. Цветные части сохраняют свои цвета.",
+  "welcome.apps.title": "Эти выглядят светлыми",
+  "welcome.apps.text": "Открытые окна, которые Deonyx может затемнить. Снимите отметку с тех, что хотите оставить как есть.",
+  "welcome.apps.wait": "Смотрю на открытые окна…",
+  "welcome.apps.none": "Сейчас нет открытых светлых окон. Приложения можно добавить в любое время.",
+  "welcome.theme": "Или цветовая тема",
+});

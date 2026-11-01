@@ -249,3 +249,14 @@ Object.assign(STRINGS.ko, {
   "profiles.update": "변경 사항 저장",
   "profiles.undo": "되돌리기",
 });
+
+// 0.4: colour themes, bright windows on the first start.
+Object.assign(STRINGS.ko, {
+  "look.theme": "색상 테마",
+  "look.theme.hint": "좋아하는 팔레트를 모든 앱에. 색이 있는 부분은 원래 색을 유지합니다.",
+  "welcome.apps.title": "밝아 보이는 창",
+  "welcome.apps.text": "Deonyx가 어둡게 할 수 있는 열린 창입니다. 그대로 두고 싶은 것은 체크를 해제하세요.",
+  "welcome.apps.wait": "열린 창을 살펴보는 중…",
+  "welcome.apps.none": "지금 열려 있는 밝은 창이 없습니다. 앱은 언제든 추가할 수 있습니다.",
+  "welcome.theme": "또는 색상 테마",
+});

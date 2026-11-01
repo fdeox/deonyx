@@ -208,6 +208,12 @@ fn running_apps() -> Vec<apps::Running> {
     apps::running()
 }
 
+/// For the first start: open programs with a light window, with pictures.
+#[tauri::command(async)]
+fn bright_apps() -> Vec<apps::Bright> {
+    apps::bright()
+}
+
 #[tauri::command(async)]
 fn installed_apps() -> Vec<apps::Running> {
     apps::installed()
@@ -1115,6 +1121,7 @@ fn main() {
             get_state,
             set_config,
             running_apps,
+            bright_apps,
             installed_apps,
             app_icons,
             describe_app,

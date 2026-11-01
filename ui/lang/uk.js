@@ -249,3 +249,14 @@ Object.assign(STRINGS.uk, {
   "profiles.update": "Зберегти зміни",
   "profiles.undo": "Скасувати",
 });
+
+// 0.4: colour themes, bright windows on the first start.
+Object.assign(STRINGS.uk, {
+  "look.theme": "Колірна тема",
+  "look.theme.hint": "Улюблена палітра в кожному застосунку. Кольорові частини зберігають свої кольори.",
+  "welcome.apps.title": "Ці виглядають світлими",
+  "welcome.apps.text": "Відкриті вікна, які Deonyx може затемнити. Зніміть позначку з тих, що мають лишитися як є.",
+  "welcome.apps.wait": "Дивлюся на відкриті вікна…",
+  "welcome.apps.none": "Зараз немає відкритих світлих вікон. Застосунки можна додати будь-коли.",
+  "welcome.theme": "Або колірна тема",
+});

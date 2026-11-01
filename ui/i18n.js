@@ -492,6 +492,28 @@ const STRINGS = {
   },
 };
 
+// 0.4: colour themes, bright windows on the first start.
+Object.assign(STRINGS.en, {
+  "look.theme": "Colour theme",
+  "look.theme.hint": "A favourite palette on every app. Colourful parts keep their own colours.",
+  "welcome.apps.title": "These look bright",
+  "welcome.apps.text": "Open windows Deonyx can darken. Untick any you'd rather keep as they are.",
+  "welcome.apps.wait": "Looking at your open windows…",
+  "welcome.apps.none": "No bright windows are open right now. You can add apps any time.",
+  "welcome.theme": "Or a colour theme",
+});
+
+// 0.4: colour themes, bright windows on the first start.
+Object.assign(STRINGS.tr, {
+  "look.theme": "Renk teması",
+  "look.theme.hint": "Sevdiğin bir palet her uygulamada. Renkli kısımlar kendi renklerini korur.",
+  "welcome.apps.title": "Bunlar parlak görünüyor",
+  "welcome.apps.text": "Deonyx'in karartabileceği açık pencereler. Olduğu gibi kalmasını istediklerinin işaretini kaldır.",
+  "welcome.apps.wait": "Açık pencerelerine bakılıyor…",
+  "welcome.apps.none": "Şu an açık parlak bir pencere yok. Uygulama eklemeyi istediğin zaman yapabilirsin.",
+  "welcome.theme": "Ya da bir renk teması",
+});
+
 let LANG = "en";
 
 function t(key, vars = {}) {

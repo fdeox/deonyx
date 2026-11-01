@@ -28,6 +28,20 @@ pub const OVERLAY_CLASS: &str = "DeonyxOverlay";
 /// answer stays the same, less and less often, down to PHOTO_CALM.
 const PHOTO_EVERY: Duration = Duration::from_millis(60);
 const PHOTO_CALM: Duration = Duration::from_millis(480);
+/// While a window's photos move (a page scrolling, and a moment after),
+/// every new picture of it is looked at before it's drawn, so their frames
+/// move with them instead of trailing behind. Photos that stay put, like a
+/// playing video, are looked at now and then as before, and so is everything
+/// when finding photos takes longer than PHOTO_FOLLOW_MAX (a huge window, a
+/// slow PC).
+const PHOTO_FOLLOW: Duration = Duration::from_secs(1);
+const PHOTO_FOLLOW_MAX: Duration = Duration::from_millis(6);
+/// How often a window's lightness is measured while it changes, to tell
+/// whether it's dark already (a page that loads dark, a dark dialog).
+const PROBE_EVERY: Duration = Duration::from_millis(100);
+/// A window switching between darkened and shown as it is passes through
+/// its real colours, this many milliseconds each way.
+const SWITCH_MS: f32 = 120.0;
 
 unsafe extern "system" fn wndproc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match m {
@@ -55,6 +69,8 @@ pub struct Look {
     pub lmin: f32,
     pub lmax: f32,
     pub warm: f32,
+    /// A colour theme's colours (config::tone).
+    pub tone: [f32; 4],
     /// Lifts faint text: 1 leaves it, lower lifts more (see shader.hlsl).
     pub boost: f32,
     /// A window that is dark already is dimmed this much (0 leaves it).
@@ -80,6 +96,8 @@ struct Probe {
     level: u32,
     w: u32,
     h: u32,
+    /// A copy to it is on its way.
+    waiting: bool,
 }
 
 /// The photo rating of the window, one byte per 4x4 block (photos.rs).
@@ -95,6 +113,15 @@ struct PhotoPass {
     /// The current wait between looks, and a fingerprint of the last rating.
     every: Duration,
     seen: u64,
+    /// When the photos found last moved, and how long finding them took.
+    moved: Option<Instant>,
+    cost: Duration,
+}
+
+impl PhotoPass {
+    fn follow(&self) -> bool {
+        self.moved.is_some_and(|t| t.elapsed() < PHOTO_FOLLOW) && self.cost < PHOTO_FOLLOW_MAX
+    }
 }
 
 /// Darkening strength moving from one value to another.
@@ -134,6 +161,14 @@ pub struct Layer {
     probe: Option<Probe>,
     last_probe: Instant,
     measured: bool,
+    /// Measurements in a row that found a darkened window dark.
+    dark_runs: u32,
+    /// Parts of the window other windows cover (screen copy only).
+    covered: Vec<RECT>,
+    /// Switching between darkened and shown as it is: the darkening goes
+    /// out (`mix` to 0), `next` takes over, and it comes back in.
+    mix: Fade,
+    next: Option<f32>,
     size: (u32, u32),
     pub params: Params,
     /// Protected areas relative to the window frame (found by UI Automation).
@@ -247,6 +282,10 @@ impl Layer {
                 probe: None,
                 last_probe: Instant::now(),
                 measured: false,
+                dark_runs: 0,
+                covered: Vec::new(),
+                mix: Fade { from: 1.0, to: 1.0, start: Instant::now(), ms: 0.0 },
+                next: None,
                 size: (w0, h0),
                 params: Params {
                     lmin: look.lmin,
@@ -259,6 +298,7 @@ impl Layer {
                     strength: look.strength,
                     boost: look.boost,
                     dim: look.dim,
+                    tone: look.tone,
                     ..Default::default()
                 },
                 protect: Vec::new(),
@@ -361,7 +401,7 @@ impl Layer {
             };
             let mut st = None;
             gpu.device.CreateTexture2D(&sd, None, Some(&mut st))?;
-            self.probe = st.map(|t| Probe { tex: t, level: lvl, w: pw, h: ph });
+            self.probe = st.map(|t| Probe { tex: t, level: lvl, w: pw, h: ph, waiting: false });
 
             // The photo rating, a quarter of the size each way.
             let (mw, mh) = (w.div_ceil(photos::BLOCK as u32), h.div_ceil(photos::BLOCK as u32));
@@ -389,6 +429,8 @@ impl Layer {
             };
             let mut ms = None;
             gpu.device.CreateTexture2D(&staging_desc, None, Some(&mut ms))?;
+            // A window resized while its photos move goes on following them.
+            let (moved, cost) = self.photo.as_ref().map_or((None, Duration::ZERO), |p| (p.moved, p.cost));
             self.photo = Some(PhotoPass {
                 rtv: mrtv.unwrap(),
                 tex: mt,
@@ -399,6 +441,8 @@ impl Layer {
                 last: Instant::now() - PHOTO_EVERY,
                 every: PHOTO_EVERY,
                 seen: 0,
+                moved,
+                cost,
             });
             self.photos.clear();
         }
@@ -422,7 +466,7 @@ impl Layer {
     }
 
     pub fn fading(&self) -> bool {
-        !self.fade.done()
+        !self.fade.done() || !self.mix.done() || self.next.is_some()
     }
 
     /// Keeps the overlay over the target and directly above it in z-order.
@@ -527,8 +571,15 @@ impl Layer {
     /// A new picture of the window is in `copy`: measure it, look for
     /// photos, draw.
     fn after_copy(&mut self, gpu: &Gpu, enabled: bool, t: Instant) -> Result<bool> {
-        if !self.shown || self.last_probe.elapsed().as_millis() >= 500 {
-            self.measure(gpu);
+        if !self.shown {
+            // Decided before anything shows, so a dark window never flashes light.
+            self.probe(gpu);
+            self.read_probe(gpu, true);
+        } else {
+            self.read_probe(gpu, false);
+            if self.last_probe.elapsed() >= PROBE_EVERY {
+                self.probe(gpu);
+            }
         }
         self.rate_photos(gpu);
         if self.shown && self.gap.is_some_and(|g| self.last_render.elapsed() < g) {
@@ -559,7 +610,15 @@ impl Layer {
         if !self.shown {
             return false;
         }
-        let photos_changed = self.read_photos(gpu);
+        let photos_changed = self.read_photos(gpu, false);
+        self.read_probe(gpu, false);
+        if let Some(a) = self.next {
+            if self.mix.done() {
+                self.params.amount = a;
+                self.next = None;
+                self.mix = Fade { from: 0.0, to: 1.0, start: Instant::now(), ms: SWITCH_MS };
+            }
+        }
         let due = self.pending && self.gap.is_none_or(|g| self.last_render.elapsed() >= g);
         if self.fading() || due || photos_changed {
             let _ = self.render(gpu);
@@ -568,13 +627,19 @@ impl Layer {
         false
     }
 
-    /// Rates the window's blocks for looking like a photo, now and then.
+    /// Rates the window's blocks for looking like a photo, now and then, or
+    /// right away while following photos (PHOTO_FOLLOW).
     fn rate_photos(&mut self, gpu: &Gpu) {
         if !self.find_photos || self.params.amount <= 0.0 {
             return;
         }
+        let Some(p) = self.photo.as_ref() else { return };
+        let follow = p.follow();
+        if follow && p.waiting {
+            self.read_photos(gpu, true);
+        }
         let Some(p) = self.photo.as_mut() else { return };
-        if p.waiting || p.last.elapsed() < p.every {
+        if p.waiting || (!follow && p.last.elapsed() < p.every) {
             return;
         }
         let Some((_, srv)) = &self.copy else { return };
@@ -591,17 +656,21 @@ impl Layer {
         }
         p.waiting = true;
         p.last = Instant::now();
+        if follow {
+            self.read_photos(gpu, true);
+        }
     }
 
-    /// Picks up the photo rating once the GPU has it, without waiting for
-    /// it. True if the photos found changed.
-    fn read_photos(&mut self, gpu: &Gpu) -> bool {
+    /// Picks up the photo rating once the GPU has it, waiting for it only
+    /// when `wait`. True if the photos found changed.
+    fn read_photos(&mut self, gpu: &Gpu, wait: bool) -> bool {
         let Some(p) = self.photo.as_mut() else { return false };
         if !p.waiting {
             return false;
         }
+        let flags = if wait { 0 } else { D3D11_MAP_FLAG_DO_NOT_WAIT.0 as u32 };
         let mut m = D3D11_MAPPED_SUBRESOURCE::default();
-        let mapped = unsafe { gpu.ctx.Map(&p.staging, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT.0 as u32, Some(&mut m)) };
+        let mapped = unsafe { gpu.ctx.Map(&p.staging, 0, D3D11_MAP_READ, flags, Some(&mut m)) };
         if mapped.is_err() {
             return false;
         }
@@ -617,12 +686,15 @@ impl Layer {
         }
         p.seen = seen;
         p.every = PHOTO_EVERY;
+        let t = Instant::now();
         let found = photos::find(cells, p.w as usize, p.h as usize, m.RowPitch as usize);
+        p.cost = t.elapsed();
         unsafe { gpu.ctx.Unmap(&p.staging, 0) };
         p.waiting = false;
         if !self.find_photos || found == self.photos {
             return false;
         }
+        p.moved = Some(Instant::now());
         self.photos = found;
         true
     }
@@ -643,11 +715,30 @@ impl Layer {
         for (i, r) in all.iter().take(n).enumerate() {
             self.params.rects[i] = [r.left as f32, r.top as f32, r.right as f32, r.bottom as f32];
         }
+        // A clearly dark or light frame decides at once on the GPU (shader
+        // amount_now), except while other windows cover much of this one:
+        // the screen copy shows them, and only the CPU leaves them out.
+        let area = |r: &RECT| width(r) as i64 * height(r) as i64;
+        let covered: i64 = self.covered.iter().map(area).sum();
+        let forced = std::env::var_os("DEONYX_FORCE_DARKEN").is_some();
+        self.params.auto = if !forced && self.params.split <= 0.0 && covered * 10 < w as i64 * h as i64 { 1.0 } else { 0.0 };
         let mut p = self.params;
         p.split = if self.params.split > 0.0 { self.size.0 as f32 / 2.0 } else { 0.0 };
-        p.strength = self.strength();
+        p.strength = self.strength() * self.mix.value();
+        let srv = self.copy.as_ref().map(|(_, s)| s.clone());
         unsafe {
             gpu.ctx.UpdateSubresource(&gpu.cb, 0, None, &p as *const Params as *const c_void, 0, 0);
+            gpu.ctx.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            gpu.ctx.VSSetShader(&gpu.vs, None);
+            gpu.ctx.PSSetConstantBuffers(0, Some(&[Some(gpu.cb.clone())]));
+            if p.auto > 0.0 {
+                // This frame's lightness, into the one-pixel target.
+                gpu.ctx.PSSetShaderResources(0, Some(&[srv.clone(), None]));
+                gpu.ctx.OMSetRenderTargets(Some(&[Some(gpu.level_rtv.clone())]), None);
+                gpu.ctx.RSSetViewports(Some(&[D3D11_VIEWPORT { Width: 1.0, Height: 1.0, MaxDepth: 1.0, ..Default::default() }]));
+                gpu.ctx.PSSetShader(&gpu.level, None);
+                gpu.ctx.Draw(3, 0);
+            }
             gpu.ctx.OMSetRenderTargets(Some(&[self.rtv.clone()]), None);
             let vp = D3D11_VIEWPORT {
                 Width: self.size.0 as f32,
@@ -656,13 +747,11 @@ impl Layer {
                 ..Default::default()
             };
             gpu.ctx.RSSetViewports(Some(&[vp]));
-            gpu.ctx.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-            gpu.ctx.VSSetShader(&gpu.vs, None);
             gpu.ctx.PSSetShader(&gpu.ps, None);
-            let srv = self.copy.as_ref().map(|(_, s)| s.clone());
-            gpu.ctx.PSSetShaderResources(0, Some(&[srv]));
-            gpu.ctx.PSSetConstantBuffers(0, Some(&[Some(gpu.cb.clone())]));
+            gpu.ctx.PSSetShaderResources(0, Some(&[srv, Some(gpu.level_srv.clone())]));
             gpu.ctx.Draw(3, 0);
+            // Free the one-pixel target for the next layer's measuring.
+            gpu.ctx.PSSetShaderResources(1, Some(&[None]));
             self.swap.Present(0, DXGI_PRESENT(0)).ok()?;
         }
         self.last_render = Instant::now();
@@ -670,57 +759,126 @@ impl Layer {
         Ok(())
     }
 
+    /// Sends the newest picture's small mip to the CPU, to be measured once
+    /// it's there (read_probe).
+    fn probe(&mut self, gpu: &Gpu) {
+        if self.probe.as_ref().is_none_or(|p| p.waiting) {
+            return;
+        }
+        // The screen copy shows whatever lies over the window; that mustn't
+        // count (a dark window over half of a light one).
+        if self.capture.is_none() {
+            self.covered = covered(self.target);
+        }
+        let (Some(p), Some((copy, _))) = (self.probe.as_mut(), &self.copy) else { return };
+        unsafe { gpu.ctx.CopySubresourceRegion(&p.tex, 0, 0, 0, 0, copy, p.level, None) };
+        p.waiting = true;
+        self.last_probe = Instant::now();
+    }
+
     /// Average lightness outside the protected areas decides whether the
     /// window needs darkening at all: a window that is dark already (a dark
-    /// themed system dialog, say) is shown as it is. Two thresholds keep the
-    /// decision from flickering.
-    fn measure(&mut self, gpu: &Gpu) {
-        self.last_probe = Instant::now();
-        let (Some(p), Some((copy, _))) = (&self.probe, &self.copy) else { return };
-        unsafe {
-            gpu.ctx.CopySubresourceRegion(&p.tex, 0, 0, 0, 0, copy, p.level, None);
-            let mut m = D3D11_MAPPED_SUBRESOURCE::default();
-            if gpu.ctx.Map(&p.tex, 0, D3D11_MAP_READ, 0, Some(&mut m)).is_err() {
-                return;
-            }
-            let mut sum = 0.0f64;
-            let mut n = 0u32;
-            for y in 0..p.h {
-                let row = std::slice::from_raw_parts((m.pData as *const u8).add((y * m.RowPitch) as usize), (p.w * 4) as usize);
-                for x in 0..p.w {
-                    let (fx, fy) = ((x << p.level) as i32, (y << p.level) as i32);
-                    let inside = |r: &RECT| fx >= r.left && fx < r.right && fy >= r.top && fy < r.bottom;
-                    if self.protect.iter().any(inside) || self.photos.iter().any(inside) {
-                        continue;
-                    }
-                    let px = &row[(x * 4) as usize..(x * 4 + 4) as usize];
-                    let lin = |v: u8| (v as f64 / 255.0).powf(2.2);
-                    let yl = 0.0722 * lin(px[0]) + 0.7152 * lin(px[1]) + 0.2126 * lin(px[2]);
-                    sum += yl.cbrt();
-                    n += 1;
-                }
-            }
-            gpu.ctx.Unmap(&p.tex, 0);
-            if n == 0 {
-                return;
-            }
-            let avg = sum / n as f64;
-            let was = self.params.amount;
-            let on = if std::env::var_os("DEONYX_FORCE_DARKEN").is_some() {
-                true
-            } else if !self.measured {
-                avg >= 0.46
-            } else if was > 0.0 {
-                avg >= 0.42
-            } else {
-                avg > 0.50
-            };
-            self.params.amount = if on { 1.0 } else { 0.0 };
-            if !on && (was > 0.0 || !self.measured) {
-                println!("  dark already, left alone: {} (lightness {:.2})", crate::win::class_name(self.target), avg);
-            }
-            self.measured = true;
+    /// themed system dialog, a page that loads dark) is shown as it is. Two
+    /// thresholds keep the decision from flickering, and a darkened window
+    /// has to look dark twice in a row (a page passing through dark while
+    /// it loads doesn't). Waits for the GPU only when `wait`.
+    fn read_probe(&mut self, gpu: &Gpu, wait: bool) {
+        let Some(p) = self.probe.as_mut() else { return };
+        if !p.waiting {
+            return;
         }
+        let flags = if wait { 0 } else { D3D11_MAP_FLAG_DO_NOT_WAIT.0 as u32 };
+        let mut m = D3D11_MAPPED_SUBRESOURCE::default();
+        if unsafe { gpu.ctx.Map(&p.tex, 0, D3D11_MAP_READ, flags, Some(&mut m)) }.is_err() {
+            return;
+        }
+        p.waiting = false;
+        let (pw, ph, level) = (p.w, p.h, p.level);
+        let (w, h) = (self.size.0 as i64, self.size.1 as i64);
+        let covered: i64 = self.covered.iter().map(|r| width(r) as i64 * height(r) as i64).sum();
+        // Covered almost whole, the rest says too little: measure it all.
+        let skip_covered = covered * 10 < w * h * 9;
+        let mut sum = 0.0f64;
+        let mut n = 0u32;
+        for y in 0..ph {
+            let row = unsafe { std::slice::from_raw_parts((m.pData as *const u8).add((y * m.RowPitch) as usize), (pw * 4) as usize) };
+            for x in 0..pw {
+                let (fx, fy) = ((x << level) as i32, (y << level) as i32);
+                let inside = |r: &RECT| fx >= r.left && fx < r.right && fy >= r.top && fy < r.bottom;
+                if self.protect.iter().any(inside) || self.photos.iter().any(inside) || (skip_covered && self.covered.iter().any(inside)) {
+                    continue;
+                }
+                let px = &row[(x * 4) as usize..(x * 4 + 4) as usize];
+                let lin = |v: u8| (v as f64 / 255.0).powf(2.2);
+                let yl = 0.0722 * lin(px[0]) + 0.7152 * lin(px[1]) + 0.2126 * lin(px[2]);
+                sum += yl.cbrt();
+                n += 1;
+            }
+        }
+        unsafe { gpu.ctx.Unmap(&self.probe.as_ref().unwrap().tex, 0) };
+        if n == 0 {
+            return;
+        }
+        let avg = sum / n as f64;
+        // What the shader decides on its own for this picture, if anything
+        // (it measures the same way): a switch it already shows needs no fade.
+        let shader = if self.params.auto <= 0.0 {
+            None
+        } else if avg < 0.36 {
+            Some(false)
+        } else if avg > 0.58 {
+            Some(true)
+        } else {
+            None
+        };
+        let was = self.next.unwrap_or(self.params.amount) > 0.0;
+        let on = if std::env::var_os("DEONYX_FORCE_DARKEN").is_some() {
+            true
+        } else if !self.measured {
+            avg >= 0.46
+        } else if was {
+            avg >= 0.42
+        } else {
+            avg > 0.50
+        };
+        if self.measured && was && !on {
+            self.dark_runs += 1;
+            if self.dark_runs < 2 {
+                return;
+            }
+        }
+        self.dark_runs = 0;
+        if !on && (was || !self.measured) {
+            println!("  dark already, left alone: {} (lightness {:.2})", crate::win::class_name(self.target), avg);
+        }
+        let first = !self.measured;
+        self.measured = true;
+        if first || on != was {
+            self.switch_to(if on { 1.0 } else { 0.0 }, shader == Some(on));
+        }
+    }
+
+    /// Between darkened (1) and shown as it is (0), through the real colours
+    /// rather than at once, unless the shader shows the new way already.
+    fn switch_to(&mut self, amount: f32, shown_already: bool) {
+        if shown_already {
+            self.params.amount = amount;
+            self.next = None;
+            self.mix = Fade { from: 1.0, to: 1.0, start: Instant::now(), ms: 0.0 };
+            return;
+        }
+        let real = self.params.amount <= 0.0 && self.params.dim <= 0.0;
+        if !self.shown || real {
+            // Nothing to fade out first.
+            self.params.amount = amount;
+            self.next = None;
+            if self.shown {
+                self.mix = Fade { from: 0.0, to: 1.0, start: Instant::now(), ms: SWITCH_MS };
+            }
+            return;
+        }
+        self.next = Some(amount);
+        self.mix = Fade { from: self.mix.value(), to: 0.0, start: Instant::now(), ms: SWITCH_MS };
     }
 
     /// The window was found to be dark already and is shown as it is.
@@ -734,6 +892,45 @@ impl Layer {
             let _ = self.render(gpu);
         }
     }
+}
+
+/// The parts of a window that other windows lie over, in its own pixels.
+/// Click-through windows (shadows, effects, other apps' overlays) mostly
+/// show what's under them and don't count; neither do our own layers, which
+/// the screen copy never sees.
+fn covered(target: HWND) -> Vec<RECT> {
+    let frame = frame_rect(target);
+    let mut out = Vec::new();
+    let mut h = target;
+    unsafe {
+        for _ in 0..256 {
+            h = match GetWindow(h, GW_HWNDPREV) {
+                Ok(x) if !x.is_invalid() => x,
+                _ => break,
+            };
+            if !IsWindowVisible(h).as_bool() || IsIconic(h).as_bool() || crate::win::is_cloaked(h) {
+                continue;
+            }
+            let ex = GetWindowLongW(h, GWL_EXSTYLE) as u32;
+            if ex & WS_EX_TRANSPARENT.0 != 0 || crate::win::class_name(h) == OVERLAY_CLASS {
+                continue;
+            }
+            let r = frame_rect(h);
+            let i = RECT {
+                left: r.left.max(frame.left) - frame.left,
+                top: r.top.max(frame.top) - frame.top,
+                right: r.right.min(frame.right) - frame.left,
+                bottom: r.bottom.min(frame.bottom) - frame.top,
+            };
+            if width(&i) > 0 && height(&i) > 0 {
+                out.push(i);
+                if out.len() >= 16 {
+                    break;
+                }
+            }
+        }
+    }
+    out
 }
 
 impl Drop for Layer {

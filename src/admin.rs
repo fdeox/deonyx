@@ -158,6 +158,25 @@ pub fn relaunch_elevated() {
         .spawn();
 }
 
+/// A moment after we quit, start Deonyx again the way this copy runs, in the
+/// tray (the watchdog's last resort when the engine stays stuck): through
+/// the Store alias, the administrator task, or the exe itself.
+pub fn relaunch_hidden() {
+    let start = if crate::store::packaged() {
+        let Ok(local) = std::env::var("LOCALAPPDATA") else { return };
+        format!("start \"\" \"{local}\\Microsoft\\WindowsApps\\deonyx.exe\" --hidden")
+    } else if elevated() {
+        format!("schtasks /Run /TN {TASK}")
+    } else {
+        let Ok(exe) = std::env::current_exe() else { return };
+        format!("start \"\" \"{}\" --hidden", exe.to_string_lossy())
+    };
+    let _ = Command::new("cmd")
+        .raw_arg(format!("/c ping -n 3 127.0.0.1 >nul & {start}"))
+        .creation_flags(NO_WINDOW)
+        .spawn();
+}
+
 /// A moment after we quit, start Deonyx without administrator rights:
 /// Explorer starts it as the signed-in user.
 pub fn relaunch_normal() {

@@ -58,7 +58,9 @@ Deonyx is free, and it does it properly.
 
 - **Your apps, or every light window.** Pick the apps to darken, or let Deonyx darken every light window and keep a list of programs it leaves alone.
 - **Tune each app.** Its own background darkness and text brightness. Well-known apps start with settings that suit them.
-- **Pick a look.** Gray is easy on the eyes, Black suits OLED screens, Soft lowers the contrast, Paper is warm and calm for long reading. Faint gray text stays readable, a warm tint makes evenings easier, and each screen can have its own look, or none at all. Apps with a dark mode of their own can be dimmed a little, without flipping anything.
+- **Your apps in a few clicks.** On the first start Deonyx shows the bright windows you have open, with pictures, and darkens the ones you pick in one go.
+- **Pick a look.** Gray is easy on the eyes, Black suits OLED screens, Soft lowers the contrast, Paper is warm and calm for long reading.
+- **Color themes.** Dracula, Nord, Catppuccin, Tokyo Night, Gruvbox, Solarized, One Dark or Rosé Pine on every app: backgrounds and text take the theme's colors, colorful parts keep their own. Faint gray text stays readable, a warm tint makes evenings easier, and each screen can have its own look, or none at all. Apps with a dark mode of their own can be dimmed a little, without flipping anything.
 - **Profiles.** Keep setups like Day, Night or Presenting under a name and switch in one click, from the settings, the tray, a Stream Deck key or the command line.
 - **Choose when.** Always, whenever Windows is in dark mode, between the hours you set, or from sunset to sunrise where you live, darkening slowly over half an hour if you like. On battery it can keep going, save power, or pause. It also steps aside by itself while the games or programs you pick are running.
 - **Keep real colors where you want them.** Click a video, a canvas or a 3D view, or draw a box over it, and it stays as it is, even when the window is resized.
@@ -72,7 +74,7 @@ Deonyx is free, and it does it properly.
 - **Run as administrator** to darken apps like Task Manager. Normal apps are still darkened without administrator rights, so tools like AutoHotkey keep working in them.
 - **Start with Windows** and wait quietly in the tray.
 - **13 languages:** English, Türkçe, Deutsch, Français, Español, Italiano, Português, Nederlands, Русский, Українська, 日本語, 한국어 and 简体中文.
-- **Tells you when a new version is out** with a green dot on the tray icon, and updates in one click. It also brings a "Copy diagnostics" button for bug reports. If something fails, Deonyx gets back up by itself and keeps a report you can send.
+- **Tells you when a new version is out** with a green dot on the tray icon, and updates in one click. It also brings a "Copy diagnostics" button for bug reports. If something fails, Deonyx gets back up by itself and keeps a report you can send, and if it ever stops answering, its darkening steps aside within two seconds so nothing on your screen looks frozen.
 
 <br clear="right">
 

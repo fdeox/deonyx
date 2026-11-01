@@ -249,3 +249,14 @@ Object.assign(STRINGS.ja, {
   "profiles.update": "変更を保存",
   "profiles.undo": "元に戻す",
 });
+
+// 0.4: colour themes, bright windows on the first start.
+Object.assign(STRINGS.ja, {
+  "look.theme": "カラーテーマ",
+  "look.theme.hint": "お気に入りのパレットをすべてのアプリに。色のある部分はその色のままです。",
+  "welcome.apps.title": "明るいウィンドウ",
+  "welcome.apps.text": "Deonyx で暗くできる開いているウィンドウです。そのままにしたいものはチェックを外してください。",
+  "welcome.apps.wait": "開いているウィンドウを確認しています…",
+  "welcome.apps.none": "いま明るいウィンドウは開いていません。アプリはいつでも追加できます。",
+  "welcome.theme": "またはカラーテーマ",
+});

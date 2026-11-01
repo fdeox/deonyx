@@ -19,6 +19,8 @@ cbuffer Params : register(b0)
     float strength;    // 0..1: 0 shows the real colours, for fading in and out
     float boost;       // curve on the flipped lightness: < 1 lifts faint text
     float dim;         // > 0: a window that is dark already is dimmed this much
+    float autod;       // 1: a clearly dark or clearly light frame decides at once
+    float4 tone;       // a colour theme: background a, b and text a, b (OKLab)
 };
 
 float4 vs(uint id : SV_VertexID) : SV_Position
@@ -103,10 +105,68 @@ float3 dimmed(float3 rgb)
     return tint(to_srgb(saturate(from_oklab(lab))));
 }
 
+// The frame's lightness, measured like the CPU does (layer.rs read_probe):
+// the mean of each pixel's cube-root luminance on a small mip level, leaving
+// out the kept areas. One pixel; the main pass reads it back.
+Texture2D<float> level_tex : register(t1);
+
+float level(float4 pos : SV_Position) : SV_Target
+{
+    uint w, h, levels;
+    src.GetDimensions(0, w, h, levels);
+    uint lv = 0;
+    while ((w >> (lv + 1)) >= 48 && (h >> (lv + 1)) >= 16 && lv + 1 < levels)
+        lv++;
+    uint pw = max(w >> lv, 1), ph = max(h >> lv, 1);
+    float sum = 0;
+    float n = 0;
+    for (uint y = 0; y < ph; y++)
+    {
+        for (uint x = 0; x < pw; x++)
+        {
+            float2 f = float2(x << lv, y << lv);
+            bool kept = false;
+            for (uint k = 0; k < count && !kept; k++)
+            {
+                float4 r = rects[k];
+                kept = f.x >= r.x && f.y >= r.y && f.x < r.z && f.y < r.w;
+            }
+            if (kept)
+                continue;
+            float3 c = pow(src.Load(int3(x, y, lv)).rgb, 2.2);
+            sum += pow(max(dot(c, float3(0.2126, 0.7152, 0.0722)), 0), 1.0 / 3.0);
+            n += 1;
+        }
+    }
+    return n > 0 ? sum / n : -1;
+}
+
+// Whether to darken this frame. The CPU measures a window every 100 ms and
+// wants a dark look twice before it lets go (layer.rs); a page that turns
+// dark or light in between (a browser going from page to page) would show
+// for a moment the wrong way. So a frame that is clearly dark or clearly
+// light, well past the CPU's thresholds (0.42 / 0.50), decides here on the
+// very frame it changed. Off while big parts of the window are covered by
+// other windows (screen copy), which only the CPU leaves out.
+float amount_now()
+{
+    if (autod <= 0.0)
+        return amount;
+    float l = level_tex.Load(int3(0, 0, 0));
+    if (l < 0)
+        return amount;
+    if (l < 0.36)
+        return 0.0;
+    if (l > 0.58)
+        return 1.0;
+    return amount;
+}
+
 float4 ps(float4 pos : SV_Position) : SV_Target
 {
     float4 c = src.Load(int3(pos.xy, 0));
-    if (pos.x < split || (amount <= 0.0 && dim <= 0.0))
+    float on = amount_now();
+    if (pos.x < split || (on <= 0.0 && dim <= 0.0))
         return keep(c);
     for (uint k = 0; k < count; k++)
     {
@@ -124,7 +184,7 @@ float4 ps(float4 pos : SV_Position) : SV_Target
         if (max(c.r, max(c.g, c.b)) < 0.002 && max(block.r, max(block.g, block.b)) < 0.002)
             return float4(0, 0, 0, 0);
     }
-    if (amount <= 0.0)
+    if (on <= 0.0)
         return shown(dimmed(c.rgb), c);
     // Flip lightness only: white turns dark grey, black turns soft white,
     // and a red stays red.
@@ -171,6 +231,9 @@ float4 ps(float4 pos : SV_Position) : SV_Target
     // turn into a loud red outline once it is dark.
     float keep = fringe > 0.0 ? pow(saturate(lab.x / max(before, 0.001)), 0.8) : 1.0;
     lab.yz *= sat * keep;
+    // A theme colours the greys: the background takes its colour, text its
+    // own, and what lies between something in between.
+    lab.yz += lerp(tone.xy, tone.zw, saturate((lab.x - lmin) / max(lmax - lmin, 0.001)));
     return shown(tint(to_srgb(saturate(from_oklab(lab)))), c);
 }
 

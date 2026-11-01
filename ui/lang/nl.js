@@ -249,3 +249,14 @@ Object.assign(STRINGS.nl, {
   "profiles.update": "Wijzigingen opslaan",
   "profiles.undo": "Ongedaan maken",
 });
+
+// 0.4: colour themes, bright windows on the first start.
+Object.assign(STRINGS.nl, {
+  "look.theme": "Kleurthema",
+  "look.theme.hint": "Je favoriete palet op elke app. Gekleurde delen houden hun eigen kleur.",
+  "welcome.apps.title": "Deze zien er licht uit",
+  "welcome.apps.text": "Open vensters die Deonyx donker kan maken. Haal het vinkje weg bij wat zo moet blijven.",
+  "welcome.apps.wait": "Je open vensters worden bekeken…",
+  "welcome.apps.none": "Er zijn nu geen lichte vensters open. Je kunt altijd apps toevoegen.",
+  "welcome.theme": "Of een kleurthema",
+});

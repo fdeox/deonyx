@@ -10,7 +10,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
-use windows::core::{w, Result};
+use windows::core::{w, Result, BOOL};
 use windows::Win32::Foundation::*;
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
 use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
@@ -260,6 +260,74 @@ pub mod status_bits {
     }
 }
 
+/// Rounds of the engine's loop, and whether a run of it is going (not
+/// starting over or waiting between tries), for the watchdog.
+static BEAT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// The watchdog looks this often; the engine's loop comes round at least
+/// every 250 ms.
+const WATCH_EVERY: Duration = Duration::from_millis(250);
+/// Looks in a row without a round before the layers step aside, and before
+/// Deonyx starts over.
+const STUCK_LOOKS: u32 = 8;
+const DEAD_LOOKS: u32 = 80;
+
+/// Shows or hides every layer of this process from any thread: their
+/// alpha is set straight on the window, which doesn't wait for the engine.
+fn show_layers(on: bool) {
+    unsafe extern "system" fn each(h: HWND, l: LPARAM) -> BOOL {
+        if window_pid(h) == std::process::id() && class_name(h) == OVERLAY_CLASS {
+            let _ = SetLayeredWindowAttributes(h, COLORREF(0), if l.0 != 0 { 255 } else { 0 }, LWA_ALPHA);
+        }
+        BOOL(1)
+    }
+    unsafe {
+        let _ = EnumWindows(Some(each), LPARAM(on as isize));
+    }
+}
+
+/// When the engine's thread stops coming round (a call into Windows that
+/// doesn't come back: the capture service, a hung app it waits on, the
+/// graphics driver), the layers would freeze over live apps. After two
+/// seconds they step aside and the real windows show; they come back when
+/// the engine does. Stuck for twenty seconds, Deonyx starts over (a helper
+/// just quits; its main copy starts it again).
+fn watch_engine(role: Role) {
+    let _ = std::thread::Builder::new().name("deonyx-watchdog".into()).spawn(move || {
+        let (mut last, mut still, mut hidden) = (0u64, 0u32, false);
+        loop {
+            std::thread::sleep(WATCH_EVERY);
+            let beat = BEAT.load(std::sync::atomic::Ordering::Relaxed);
+            let running = RUNNING.load(std::sync::atomic::Ordering::Relaxed);
+            if beat != last || !running {
+                last = beat;
+                still = 0;
+                if hidden {
+                    hidden = false;
+                    note!("the engine answers again");
+                    show_layers(true);
+                }
+                continue;
+            }
+            still += 1;
+            if still == STUCK_LOOKS {
+                hidden = true;
+                note!("the engine stopped answering; showing the real colours");
+                show_layers(false);
+            }
+            if still == DEAD_LOOKS {
+                note!("the engine stays stuck; starting Deonyx again");
+                show_layers(false);
+                // Test copies just quit (never start a copy of their own).
+                if role == Role::Main && std::env::var_os("DEONYX_CONFIG_DIR").is_none() {
+                    crate::admin::relaunch_hidden();
+                }
+                std::process::exit(3);
+            }
+        }
+    });
+}
+
 pub type OnStatus = Arc<dyn Fn(Status) + Send + Sync>;
 pub type OnRequest = Arc<dyn Fn(Request) + Send + Sync>;
 
@@ -271,6 +339,7 @@ pub struct Engine {
 
 impl Engine {
     pub fn start(cfg: Config, role: Role, on_status: OnStatus, on_request: OnRequest) -> Engine {
+        watch_engine(role);
         let cmds = Arc::new(Mutex::new(Vec::new()));
         let (tx, rx) = mpsc::channel();
         let queue = cmds.clone();
@@ -289,15 +358,29 @@ impl Engine {
                 // darkening carries on rather than the tray staying with a
                 // dead engine. The panic hook (main.rs) keeps a report.
                 let mut failures: Vec<Instant> = Vec::new();
+                // The graphics driver can restart (an update, a hang it got
+                // over) and take our device with it; the engine then starts
+                // over on the new one, a little later if setting up fails.
+                let mut losses: Vec<Instant> = Vec::new();
                 loop {
                     let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         run(cfg.clone(), role, queue.clone(), on_status.clone(), on_request.clone())
                     }));
                     match ran {
-                        Ok(Ok(())) => break,
-                        Ok(Err(e)) => {
-                            note!("engine stopped: {e}");
-                            break;
+                        Ok(Ok(Exit::Quit)) => break,
+                        Ok(r) => {
+                            losses.retain(|t| t.elapsed() < Duration::from_secs(300));
+                            losses.push(Instant::now());
+                            if losses.len() > 10 {
+                                note!("the engine can't get going; it stays off");
+                                break;
+                            }
+                            match r {
+                                Ok(_) => note!("the graphics device went away; starting again"),
+                                Err(e) => note!("engine stopped ({e}); starting again"),
+                            }
+                            std::thread::sleep(Duration::from_secs(if losses.len() > 3 { 10 } else { 1 }));
+                            on_request(Request::Restarted);
                         }
                         Err(_) => {
                             failures.retain(|t| t.elapsed() < Duration::from_secs(300));
@@ -621,6 +704,7 @@ impl Manager {
             lmin,
             lmax,
             warm,
+            tone: crate::config::tone(&style),
             boost: if self.readable { READABLE } else { 1.0 },
             dim: self.dim,
             split: self.split,
@@ -1148,6 +1232,7 @@ impl Manager {
             l.params.lmin = look.lmin;
             l.params.lmax = look.lmax;
             l.params.warm = look.warm;
+            l.params.tone = look.tone;
             l.params.boost = look.boost;
             l.params.dim = look.dim;
             l.manual = rule.areas.clone();
@@ -1386,12 +1471,18 @@ impl Manager {
     /// anything is still moving, so the loop comes back soon.
     fn tick(&mut self) -> bool {
         let mut busy = false;
+        let mut changed = false;
         for l in self.layers.values_mut() {
+            let was = l.left_as_is();
             l.tick(&self.gpu);
             busy |= l.fading();
+            changed |= was != l.left_as_is();
         }
         for l in &mut self.leaving {
             l.tick(&self.gpu);
+        }
+        if changed {
+            self.publish();
         }
         // Gone once fully faded out.
         self.leaving.retain(|l| l.fading());
@@ -1734,13 +1825,30 @@ fn clean_up_after_failure() {
 }
 
 /// For testing the recovery: DEONYX_CRASH_TEST=engine makes a test copy's
-/// engine fail once, a few seconds in.
+/// engine fail once, a few seconds in, and =device makes it lose its
+/// graphics device once.
 static CRASHED_ONCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-fn run(cfg: Config, role: Role, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_request: OnRequest) -> Result<()> {
+/// Why a run of the engine ended.
+enum Exit {
+    Quit,
+    /// The graphics device is gone: every layer showed a frozen picture.
+    DeviceLost,
+}
+
+fn run(cfg: Config, role: Role, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus, on_request: OnRequest) -> Result<Exit> {
     clean_up_after_failure();
     let started = Instant::now();
-    let crash_test = std::env::var_os("DEONYX_CONFIG_DIR").is_some() && std::env::var("DEONYX_CRASH_TEST").as_deref() == Ok("engine");
+    let test = std::env::var_os("DEONYX_CONFIG_DIR").is_some();
+    let crash_test = test && std::env::var("DEONYX_CRASH_TEST").as_deref() == Ok("engine");
+    let lose_test = test && std::env::var("DEONYX_CRASH_TEST").as_deref() == Ok("device");
+    // =hang stops the engine's thread for 5 s once, =hang-long for good.
+    let hang_test = match std::env::var("DEONYX_CRASH_TEST").as_deref() {
+        Ok("hang") if test => Some(Duration::from_secs(5)),
+        Ok("hang-long") if test => Some(Duration::from_secs(3600)),
+        _ => None,
+    };
+    RUNNING.store(false, std::sync::atomic::Ordering::Relaxed);
     crate::layer::register_class()?;
     let open_msg = unsafe { RegisterWindowMessageW(crate::admin::OPEN_MSG) };
     let signal = match role {
@@ -1852,7 +1960,15 @@ fn run(cfg: Config, role: Role, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus,
         let mut last_purge = Instant::now();
         let mut last_time = Instant::now();
         let mut busy = false;
+        let mut exit = Exit::Quit;
+        RUNNING.store(true, std::sync::atomic::Ordering::Relaxed);
         'outer: loop {
+            BEAT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if let Some(d) = hang_test {
+                if started.elapsed().as_secs() >= 6 && !CRASHED_ONCE.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    std::thread::sleep(d);
+                }
+            }
             // Quick rounds while something fades, a key is held for peeking,
             // or the screen copy needs looking at; otherwise wait for news.
             let screen_copy = m.desk.is_some() && !m.layers.is_empty();
@@ -1903,6 +2019,13 @@ fn run(cfg: Config, role: Role, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus,
                 m.handle(*ev, *key);
             }
             m.check_peek();
+            // A driver restart leaves every layer frozen: take them away now
+            // and start over on a new device.
+            let pretend = lose_test && started.elapsed().as_secs() >= 6 && !CRASHED_ONCE.swap(true, std::sync::atomic::Ordering::Relaxed);
+            if pretend || m.gpu.device.GetDeviceRemovedReason().is_err() {
+                exit = Exit::DeviceLost;
+                break 'outer;
+            }
             m.frames();
             busy = m.tick();
             m.take_protect();
@@ -1922,6 +2045,15 @@ fn run(cfg: Config, role: Role, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus,
             }
             if last_time.elapsed().as_secs() >= 5 {
                 m.screens = screens::list();
+                if m.desk.as_ref().is_some_and(|d| d.outdated(&m.gpu)) {
+                    match Desktop::new(&m.gpu) {
+                        Ok(d) => {
+                            note!("the screens changed: copying them anew");
+                            m.desk = Some(d);
+                        }
+                        Err(e) => note!("screen copy failed: {e}"),
+                    }
+                }
                 m.watch_programs();
                 m.check_time();
                 last_time = Instant::now();
@@ -1933,6 +2065,7 @@ fn run(cfg: Config, role: Role, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus,
                 last_purge = Instant::now();
             }
         }
+        RUNNING.store(false, std::sync::atomic::Ordering::Relaxed);
         m.stop_pick();
         m.layers.clear();
         m.leaving.clear();
@@ -1951,8 +2084,8 @@ fn run(cfg: Config, role: Role, cmds: Arc<Mutex<Vec<Cmd>>>, on_status: OnStatus,
         for i in 0..m.app_keys.len() {
             let _ = UnregisterHotKey(None, HOTKEY_APP + i as i32);
         }
+        Ok(exit)
     }
-    Ok(())
 }
 
 #[cfg(test)]
